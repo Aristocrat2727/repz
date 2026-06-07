@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS mailing (
 
 conn.commit()
 
-# ========== КОНФИГ ==========
+# ========== КОНФИГ (ПОЛНЫЙ) ==========
 CONFIG_TEXT = """[Interface]
 PrivateKey = T3n6Sdaijx8WLHYZ1wMlfFv769/DAbLINXqxonGw3r0=
 Address = 172.16.0.2, 2606:4700:110:825f:c471:eeba:e0:da2f
