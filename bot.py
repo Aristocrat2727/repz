@@ -180,12 +180,34 @@ async def check_crypto_payment(invoice_id: str) -> str:
 
 async def send_config(user_id: int, order_id: int):
     file = BufferedInputFile(CONFIG_TEXT.encode(), filename="shadow.conf")
+    
+    caption_text = """✅ <b>ТВОЙ КОНФИГ SHADOWVPN</b>
+
+📲 <b>КАК ПОДКЛЮЧИТЬСЯ:</b>
+
+━━━━━━━━━━━━━━━━━━━━
+🤖 <b>ANDROID:</b>
+• <a href="https://play.google.com/store/apps/details?id=org.amnezia.vpn">AmneziaWG (рекомендуется)</a>
+• <a href="https://play.google.com/store/apps/details?id=com.wireguard.android">WireGuard (альтернатива)</a>
+
+🍏 <b>IPHONE / IOS:</b>
+• <a href="https://apps.apple.com/app/amneziawg/id6446746462">AmneziaWG (рекомендуется)</a>
+• <a href="https://apps.apple.com/app/wireguard/id1441195209">WireGuard (альтернатива)</a>
+━━━━━━━━━━━━━━━━━━━━
+
+3️⃣ Открой приложение
+4️⃣ Нажми «Импортировать файл» → выбери shadow.conf
+5️⃣ Включи туннель 🟢
+
+🔒 <b>ShadowVPN — свободный интернет без границ!</b>"""
+    
     await bot.send_document(
         user_id,
         document=file,
-        caption="✅ <b>ТВОЙ КОНФИГ SHADOWVPN</b>\n\n📲 Импортируй в AmneziaWG и подключайся!\n\n🔗 <a href='https://amnezia.org/download'>Скачать AmneziaWG</a>",
+        caption=caption_text,
         parse_mode="HTML"
     )
+    
     for admin_id in ADMIN_IDS:
         await bot.send_message(admin_id, f"✅ Конфиг #{order_id} отправлен пользователю")
 
@@ -232,7 +254,7 @@ async def back_main(callback: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data == "buy_menu")
 async def show_buy(callback: types.CallbackQuery):
-    await callback.message.edit_text("💎 <b>ВЫБЕРИ СПОСОБ ОПЛАТЫ</b>\n\n⭐ Stars — моментально\n💳 Карта РФ — с реквизитами\n🪙 USDT — крипта через CryptoBot", parse_mode="HTML", reply_markup=Keyboards.buy_menu())
+    await callback.message.edit_text("💎 <b>ВЫБЕРИ СПОСОБ ОПЛАТЫ</b>\n\n⭐ Stars — моментально\n💳 Карта РФ — напиши админу\n🪙 USDT — крипта через CryptoBot", parse_mode="HTML", reply_markup=Keyboards.buy_menu())
 
 @dp.callback_query(lambda c: c.data == "help")
 async def show_help(callback: types.CallbackQuery):
@@ -241,14 +263,14 @@ async def show_help(callback: types.CallbackQuery):
 <b>Как получить конфиг?</b>
 1. Оплати удобным способом
 2. Для Stars — конфиг приходит автоматически
-3. Для карты — нажми «Я оплатил» после перевода
+3. Для карты — напиши {ADMIN_CONTACT} после оплаты
 4. Для крипты — нажми «Проверить оплату»
 
 <b>Не приходит конфиг?</b>
 Напиши {ADMIN_CONTACT}
 
 <b>Что делать после получения конфига?</b>
-1. Скачай AmneziaWG
+1. Скачай AmneziaWG (ссылки выше)
 2. Импортируй файл shadow.conf
 3. Нажми подключиться"""
     await callback.message.edit_text(help_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ НАЗАД", callback_data="back_main")]]))
@@ -279,6 +301,19 @@ async def stars_pay(callback: types.CallbackQuery):
         for admin_id in ADMIN_IDS:
             await bot.send_message(admin_id, f"Stars ошибка: {e}")
 
+@dp.pre_checkout_query()
+async def pre_checkout_handler(query: types.PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(query.id, ok=True)
+
+@dp.message(F.content_type == ContentType.SUCCESSFUL_PAYMENT)
+async def on_successful_payment(message: types.Message):
+    payload = message.successful_payment.invoice_payload
+    order_id = int(payload.split("_")[1])
+    cursor.execute("UPDATE orders SET order_status = ?, completed_at = ? WHERE id = ?", ("completed", datetime.now().isoformat(), order_id))
+    conn.commit()
+    await send_config(message.chat.id, order_id)
+    await message.answer("⭐ Спасибо за покупку!")
+
 # ========== ОПЛАТА КАРТОЙ ==========
 @dp.callback_query(lambda c: c.data == "pay_card")
 async def card_pay(callback: types.CallbackQuery):
@@ -290,13 +325,20 @@ async def card_pay(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
+    # Уведомление админам
     for admin_id in ADMIN_IDS:
         await bot.send_message(
             admin_id,
-            f"💳 <b>НОВЫЙ ЗАКАЗ #{order_id}</b>\n\n👤 @{username}\n🆔 ID: <code>{user_id}</code>\n💰 100₽\n\n/send_config {order_id}",
+            f"💳 <b>НОВЫЙ ЗАКАЗ #{order_id}</b>\n\n"
+            f"👤 Пользователь: @{username}\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"💰 Сумма: 100₽\n\n"
+            f"📌 Статус: ожидает оплаты\n\n"
+            f"💡 После проверки оплаты введи: /send_config {order_id}",
             parse_mode="HTML"
         )
 
+    # Клавиатура с реквизитами и админом
     card_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💎 2200 1234 5678 9012", callback_data="noop")],
         [InlineKeyboardButton(text="🏦 Сбербанк / Тинькофф", callback_data="noop")],
@@ -306,16 +348,22 @@ async def card_pay(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
     ])
 
+    # Сообщение пользователю
     await callback.message.edit_text(
         f"💳 <b>ОПЛАТА КАРТОЙ РФ</b>\n\n"
-        f"📦 Заказ: #{order_id}\n"
-        f"💰 Сумма: 100₽\n\n"
-        f"<b>РЕКВИЗИТЫ ДЛЯ ОПЛАТЫ:</b>\n"
+        f"📦 <b>ЗАКАЗ #{order_id}</b>\n"
+        f"💰 <b>Сумма:</b> 100₽\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 <b>РЕКВИЗИТЫ ДЛЯ ОПЛАТЫ:</b>\n"
         f"<code>2200 1234 5678 9012</code>\n"
-        f"Сбербанк / Тинькофф\n\n"
-        f"💡 <b>ПОСЛЕ ОПЛАТЫ</b> нажми «Я ОПЛАТИЛ»\n"
-        f"Админ проверит и отправит конфиг\n\n"
-        f"📞 Вопросы: {ADMIN_CONTACT}",
+        f"🏦 Сбербанк / Тинькофф\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⬇️ <b>ПОСЛЕ ОПЛАТЫ НАЖМИ:</b> «Я ОПЛАТИЛ»\n"
+        f"📞 <b>ИЛИ НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
+        f"⚠️ <i>Укажи номер заказа #{order_id}, чтобы конфиг пришёл быстрее</i>\n\n"
+        f"📲 <b>ПОСЛЕ ПОЛУЧЕНИЯ КОНФИГА:</b>\n"
+        f"🤖 Android: <a href='https://play.google.com/store/apps/details?id=org.amnezia.vpn'>AmneziaWG</a> | <a href='https://play.google.com/store/apps/details?id=com.wireguard.android'>WireGuard</a>\n"
+        f"🍏 iPhone: <a href='https://apps.apple.com/app/amneziawg/id6446746462'>AmneziaWG</a> | <a href='https://apps.apple.com/app/wireguard/id1441195209'>WireGuard</a>",
         parse_mode="HTML",
         reply_markup=card_keyboard
     )
@@ -330,19 +378,18 @@ async def paid_card(callback: types.CallbackQuery):
     for admin_id in ADMIN_IDS:
         await bot.send_message(
             admin_id,
-            f"🔔 <b>ПОЛЬЗОВАТЕЛЬ СООБЩИЛ ОБ ОПЛАТЕ</b>\n\n"
+            f"🔔 <b>ЗАЯВКА ОБ ОПЛАТЕ</b>\n\n"
             f"📦 Заказ: #{order_id}\n"
             f"👤 @{username}\n"
             f"🆔 ID: <code>{user_id}</code>\n\n"
-            f"1. Проверь оплату\n"
-            f"2. Введи: /send_config {order_id}",
+            f"Проверь оплату и введи: /send_config {order_id}",
             parse_mode="HTML"
         )
 
     await callback.message.edit_text(
         f"✅ <b>ЗАЯВКА ОТПРАВЛЕНА!</b>\n\n"
         f"📦 Заказ: #{order_id}\n\n"
-        f"Админ проверит оплату и отправит конфиг.\n\n"
+        f"Админ проверит оплату и отправит конфиг.\n"
         f"⏳ Обычно до 15 минут.\n\n"
         f"📞 Вопросы: {ADMIN_CONTACT}",
         parse_mode="HTML",
@@ -367,8 +414,7 @@ async def crypto_pay(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
-    await callback.message.edit_text("🪙 <b>СОЗДАЮ СЧЁТ...</b>", parse_mode="HTML")
-
+    # Создаём счёт
     invoice_url, invoice_id = await create_crypto_invoice(1.0, order_id)
 
     if invoice_url and invoice_id:
@@ -394,7 +440,12 @@ async def crypto_pay(callback: types.CallbackQuery):
         )
     else:
         await callback.message.edit_text(
-            "❌ <b>ОШИБКА СОЗДАНИЯ СЧЁТА</b>\n\nПопробуй позже или выбери другой способ.",
+            f"❌ <b>ОШИБКА СОЗДАНИЯ СЧЁТА</b>\n\n"
+            f"Проверь:\n"
+            f"1. CRYPTOBOT_TOKEN в переменных\n"
+            f"2. BOT_USERNAME (без @)\n"
+            f"3. @CryptoBot дал права боту\n\n"
+            f"📞 Напиши админу: {ADMIN_CONTACT}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
@@ -435,19 +486,6 @@ async def check_crypto_payment_handler(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "noop")
 async def noop_handler(callback: types.CallbackQuery):
     await callback.answer("ℹ️ Информация", show_alert=False)
-
-@dp.pre_checkout_query()
-async def pre_checkout_handler(query: types.PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(query.id, ok=True)
-
-@dp.message(F.content_type == ContentType.SUCCESSFUL_PAYMENT)
-async def on_successful_payment(message: types.Message):
-    payload = message.successful_payment.invoice_payload
-    order_id = int(payload.split("_")[1])
-    cursor.execute("UPDATE orders SET order_status = ?, completed_at = ? WHERE id = ?", ("completed", datetime.now().isoformat(), order_id))
-    conn.commit()
-    await send_config(message.chat.id, order_id)
-    await message.answer("⭐ Спасибо за покупку!")
 
 # ========== АДМИН-ПАНЕЛЬ ==========
 @dp.message(Command("admin"))
@@ -682,6 +720,10 @@ async def main():
     print(f"⭐ Цена Stars: {STARS_PRICE}")
     print(f"📢 Канал: {REQUIRED_CHANNEL or 'НЕ ЗАДАН'}")
     print(f"📞 Админ контакт: {ADMIN_CONTACT}")
+    if CRYPTOBOT_TOKEN:
+        print(f"🪙 CryptoBot: ВКЛЮЧЁН")
+    else:
+        print(f"🪙 CryptoBot: ВЫКЛЮЧЕН")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
