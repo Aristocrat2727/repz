@@ -150,8 +150,13 @@ async def check_subscription(user_id: int) -> bool:
         return False
 
 async def create_crypto_invoice(amount_usd: float, order_id: int):
+    """Создаёт счёт в CryptoBot с полным логированием"""
     if not CRYPTOBOT_TOKEN:
+        print("❌ CRYPTOBOT_TOKEN не задан в переменных окружения")
         return None, None
+    
+    print(f"🔄 [ЗАКАЗ #{order_id}] Начинаю создание счёта в CryptoBot...")
+    print(f"   Сумма: {amount_usd} USDT")
     
     async with aiohttp.ClientSession() as session:
         url = "https://pay.crypt.bot/api/createInvoice"
@@ -171,30 +176,67 @@ async def create_crypto_invoice(amount_usd: float, order_id: int):
             "Content-Type": "application/json"
         }
         
+        print(f"📤 [ЗАКАЗ #{order_id}] Отправляю запрос к API CryptoBot...")
+        print(f"   URL: {url}")
+        print(f"   Payload: {payload}")
+        
         try:
-            async with session.post(url, json=payload, headers=headers, timeout=15) as resp:
+            async with session.post(url, json=payload, headers=headers, timeout=30) as resp:
+                print(f"📥 [ЗАКАЗ #{order_id}] Получен ответ. Статус: {resp.status}")
                 data = await resp.json()
+                print(f"   Ответ CryptoBot: {data}")
+                
                 if data.get("ok"):
-                    return data["result"]["bot_url"], str(data["result"]["invoice_id"])
-                return None, None
-        except:
+                    invoice_url = data["result"]["bot_url"]
+                    invoice_id = str(data["result"]["invoice_id"])
+                    print(f"✅ [ЗАКАЗ #{order_id}] Счёт успешно создан!")
+                    print(f"   ID счёта: {invoice_id}")
+                    print(f"   Ссылка: {invoice_url}")
+                    return invoice_url, invoice_id
+                else:
+                    print(f"❌ [ЗАКАЗ #{order_id}] Ошибка от CryptoBot API:")
+                    print(f"   {data}")
+                    return None, None
+        except asyncio.TimeoutError:
+            print(f"❌ [ЗАКАЗ #{order_id}] Таймаут при запросе к CryptoBot (30 секунд)")
+            return None, None
+        except aiohttp.ClientError as e:
+            print(f"❌ [ЗАКАЗ #{order_id}] Ошибка клиента aiohttp: {e}")
+            return None, None
+        except Exception as e:
+            print(f"❌ [ЗАКАЗ #{order_id}] Непредвиденная ошибка: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None
 
 async def check_crypto_payment(invoice_id: str) -> str:
+    """Проверяет статус оплаты с логированием"""
     if not CRYPTOBOT_TOKEN:
+        print("❌ CRYPTOBOT_TOKEN не задан")
         return "unknown"
+    
+    print(f"🔄 Проверяю статус счёта {invoice_id}...")
+    
     async with aiohttp.ClientSession() as session:
         url = "https://pay.crypt.bot/api/getInvoices"
         payload = {"invoice_ids": invoice_id}
         headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
+        
         try:
             async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
                 data = await resp.json()
+                print(f"📥 Ответ проверки: {data}")
+                
                 if data.get("ok") and data["result"]["items"]:
-                    return data["result"]["items"][0]["status"]
-        except:
-            pass
-    return "unknown"
+                    status = data["result"]["items"][0]["status"]
+                    print(f"   Статус счёта: {status}")
+                    return status
+                else:
+                    print(f"   Ошибка или счёт не найден")
+                    return "unknown"
+        except Exception as e:
+            print(f"❌ Ошибка при проверке: {e}")
+            return "unknown"
 
 async def send_config(user_id: int, order_id: int):
     file = BufferedInputFile(CONFIG_TEXT.encode(), filename="shadow.conf")
@@ -209,7 +251,7 @@ async def send_config(user_id: int, order_id: int):
 • <a href="https://play.google.com/store/apps/details?id=com.wireguard.android">WireGuard (альтернатива)</a>
 
 🍏 <b>IPHONE / IOS:</b>
-• <a href="https://apps.apple.com/app/amneziawg/id6446746462">AmneziaWG (рекомендуется)</a>
+• <a href="https://apps.apple.com/ru/app/amneziawg/id6478942365">AmneziaWG (рекомендуется)</a>
 • <a href="https://apps.apple.com/app/wireguard/id1441195209">WireGuard (альтернатива)</a>
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -226,6 +268,7 @@ async def send_config(user_id: int, order_id: int):
         parse_mode="HTML"
     )
     
+    print(f"✅ Конфиг #{order_id} отправлен пользователю {user_id}")
     for admin_id in ADMIN_IDS:
         await bot.send_message(admin_id, f"✅ Конфиг #{order_id} отправлен пользователю")
 
@@ -243,6 +286,7 @@ async def is_banned(user_id: int) -> bool:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
+    print(f"👤 Новый пользователь: {user_id} (@{message.from_user.username})")
     await register_user(user_id, message.from_user.username, message.from_user.first_name)
 
     if await is_banned(user_id):
@@ -297,11 +341,13 @@ async def show_help(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "pay_stars")
 async def stars_pay(callback: types.CallbackQuery):
     user_id = callback.from_user.id
+    print(f"⭐ Новая оплата Stars от {user_id}")
 
     cursor.execute("INSERT INTO orders (user_id, username, payment_method, amount, order_status, created_at) VALUES (?,?,?,?,?,?)",
                    (user_id, callback.from_user.username or "no_user", "stars", str(STARS_PRICE), "waiting", datetime.now().isoformat()))
     conn.commit()
     order_id = cursor.lastrowid
+    print(f"   Создан заказ #{order_id}")
 
     try:
         await bot.send_invoice(
@@ -313,20 +359,25 @@ async def stars_pay(callback: types.CallbackQuery):
             prices=[LabeledPrice(label="SHADOWVPN", amount=STARS_PRICE)],
             provider_token=""
         )
+        print(f"   Инвойс отправлен для заказа #{order_id}")
         await callback.answer("⭐ Счёт отправлен! Проверь диалог.")
     except Exception as e:
+        print(f"❌ Ошибка при отправке инвойса: {e}")
         await callback.answer("❌ Ошибка, сообщи админу", show_alert=True)
         for admin_id in ADMIN_IDS:
             await bot.send_message(admin_id, f"Stars ошибка: {e}")
 
 @dp.pre_checkout_query()
 async def pre_checkout_handler(query: PreCheckoutQuery):
+    print(f"🔄 Pre-checkout запрос от {query.from_user.id}")
     await bot.answer_pre_checkout_query(query.id, ok=True)
 
 @dp.message(F.content_type == ContentType.SUCCESSFUL_PAYMENT)
 async def on_successful_payment(message: types.Message):
     payload = message.successful_payment.invoice_payload
     order_id = int(payload.split("_")[1])
+    print(f"✅ Успешная оплата Stars! Заказ #{order_id}")
+    
     cursor.execute("UPDATE orders SET order_status = ?, completed_at = ? WHERE id = ?", ("completed", datetime.now().isoformat(), order_id))
     conn.commit()
     await send_config(message.chat.id, order_id)
@@ -337,11 +388,13 @@ async def on_successful_payment(message: types.Message):
 async def card_pay(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "no_username"
+    print(f"💳 Новая оплата картой от {user_id}")
 
     cursor.execute("INSERT INTO orders (user_id, username, payment_method, amount, order_status, created_at) VALUES (?,?,?,?,?,?)",
                    (user_id, username, "card", "100₽", "waiting", datetime.now().isoformat()))
     conn.commit()
     order_id = cursor.lastrowid
+    print(f"   Создан заказ #{order_id}")
 
     for admin_id in ADMIN_IDS:
         await bot.send_message(
@@ -381,28 +434,33 @@ async def card_pay(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data == "pay_crypto")
 async def crypto_pay(callback: types.CallbackQuery):
     if not CRYPTOBOT_TOKEN:
+        print("❌ Криптооплата недоступна: CRYPTOBOT_TOKEN не задан")
         await callback.answer("❌ Криптооплата недоступна", show_alert=True)
         return
 
     user_id = callback.from_user.id
     username = callback.from_user.username or "no_username"
+    print(f"🪙 Новая крипто-оплата от {user_id}")
 
     cursor.execute("INSERT INTO orders (user_id, username, payment_method, amount, order_status, created_at) VALUES (?,?,?,?,?,?)",
                    (user_id, username, "crypto", "1 USDT", "waiting", datetime.now().isoformat()))
     conn.commit()
     order_id = cursor.lastrowid
+    print(f"   Создан заказ #{order_id}")
 
     status_msg = await callback.message.edit_text(
         f"🪙 <b>СОЗДАНИЕ СЧЁТА...</b>\n\n📦 Заказ #{order_id}\n⏳ Пожалуйста, подожди...",
         parse_mode="HTML"
     )
 
+    print(f"🔄 [ЗАКАЗ #{order_id}] Вызываю create_crypto_invoice...")
     invoice_url, invoice_id = await create_crypto_invoice(1.0, order_id)
 
     if invoice_url and invoice_id:
         cursor.execute("UPDATE orders SET crypto_invoice_id = ?, crypto_invoice_url = ? WHERE id = ?", 
                        (invoice_id, invoice_url, order_id))
         conn.commit()
+        print(f"✅ [ЗАКАЗ #{order_id}] Счёт сохранён в БД")
 
         await status_msg.edit_text(
             f"🪙 <b>ОПЛАТА CRYPTO (USDT)</b>\n\n"
@@ -414,8 +472,14 @@ async def crypto_pay(callback: types.CallbackQuery):
             reply_markup=Keyboards.crypto_payment_keyboard(invoice_url, order_id)
         )
     else:
+        print(f"❌ [ЗАКАЗ #{order_id}] НЕ УДАЛОСЬ создать счёт!")
         await status_msg.edit_text(
             f"❌ <b>ОШИБКА СОЗДАНИЯ СЧЁТА</b>\n\n"
+            f"📦 Заказ: #{order_id}\n\n"
+            f"Возможные причины:\n"
+            f"• Не включены API методы в @CryptoBot\n"
+            f"• Неправильный CRYPTOBOT_TOKEN\n"
+            f"• BOT_USERNAME не задан\n\n"
             f"📞 Напиши админу: {ADMIN_CONTACT}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -427,17 +491,21 @@ async def crypto_pay(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_crypto_"))
 async def check_crypto_payment_handler(callback: types.CallbackQuery):
     order_id = int(callback.data.split("_")[2])
+    print(f"🔄 Проверка оплаты для заказа #{order_id}")
 
     cursor.execute("SELECT order_status, crypto_invoice_id, user_id FROM orders WHERE id = ?", (order_id,))
     row = cursor.fetchone()
 
     if not row:
+        print(f"❌ Заказ #{order_id} не найден")
         await callback.answer("❌ Заказ не найден")
         return
 
     status, invoice_id, user_id = row
+    print(f"   Статус заказа: {status}, invoice_id: {invoice_id}")
 
     if status == "completed":
+        print(f"   Конфиг уже выдан")
         await callback.answer("✅ Конфиг уже выдан!", show_alert=True)
         return
 
@@ -446,14 +514,17 @@ async def check_crypto_payment_handler(callback: types.CallbackQuery):
     inv_status = await check_crypto_payment(invoice_id)
 
     if inv_status == "paid":
+        print(f"✅ Оплата подтверждена! Заказ #{order_id}")
         cursor.execute("UPDATE orders SET order_status = ?, completed_at = ? WHERE id = ?", ("completed", datetime.now().isoformat(), order_id))
         conn.commit()
         await send_config(user_id, order_id)
         await callback.message.edit_text("✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\nКонфиг отправлен выше.", parse_mode="HTML")
         await callback.answer("✅ Конфиг отправлен!")
     elif inv_status == "expired":
+        print(f"❌ Счёт просрочен для заказа #{order_id}")
         await callback.answer("❌ Счёт просрочен. Создай новый заказ", show_alert=True)
     else:
+        print(f"⏳ Ещё не оплачено для заказа #{order_id}, статус: {inv_status}")
         await callback.answer("⏳ Ещё не оплачено. Оплати и нажми снова.", show_alert=True)
 
 @dp.callback_query(lambda c: c.data == "noop")
@@ -655,8 +726,11 @@ async def check_crypto_bot(message: types.Message):
         await message.answer("❌ Нет прав")
         return
     
+    print("🔧 Проверка CryptoBot админом")
+    
     if not CRYPTOBOT_TOKEN:
-        await message.answer("❌ CRYPTOBOT_TOKEN не задан")
+        print("❌ CRYPTOBOT_TOKEN не задан")
+        await message.answer("❌ CRYPTOBOT_TOKEN не задан в переменных окружения Railway\n\nДобавь переменную CRYPTOBOT_TOKEN и перезапусти бота", parse_mode="HTML")
         return
     
     status_msg = await message.answer("🔄 Проверяю подключение к CryptoBot...")
@@ -668,20 +742,32 @@ async def check_crypto_bot(message: types.Message):
         try:
             async with session.post(url, headers=headers, timeout=10) as resp:
                 data = await resp.json()
+                print(f"📥 Ответ getMe: {data}")
+                
                 if data.get("ok"):
                     await status_msg.edit_text(
                         f"✅ <b>CryptoBot подключён успешно!</b>\n\n"
                         f"🤖 Приложение: {data['result'].get('name', 'Unknown')}\n"
                         f"🆔 ID: {data['result']['id']}\n\n"
                         f"📌 <b>Проверь в @CryptoBot:</b>\n"
-                        f"• Метод createInvoice: Вкл.\n"
-                        f"• Метод getInvoices: Вкл.",
+                        f"• Метод createInvoice: Должен быть Вкл.\n"
+                        f"• Метод getInvoices: Должен быть Вкл.\n\n"
+                        f"Если методы выключены - включи их в настройках приложения",
                         parse_mode="HTML"
                     )
                 else:
-                    await status_msg.edit_text(f"❌ Ошибка: {data}", parse_mode="HTML")
+                    await status_msg.edit_text(
+                        f"❌ <b>Ошибка подключения к CryptoBot</b>\n\n"
+                        f"Ответ: {data}\n\n"
+                        f"Возможные причины:\n"
+                        f"• Неправильный CRYPTOBOT_TOKEN\n"
+                        f"• Токен просрочен или отозван\n\n"
+                        f"Получи новый токен в @CryptoBot → Crypto Pay → Твое приложение",
+                        parse_mode="HTML"
+                    )
         except Exception as e:
-            await status_msg.edit_text(f"❌ Ошибка: {e}")
+            print(f"❌ Ошибка при проверке: {e}")
+            await status_msg.edit_text(f"❌ Ошибка подключения: {e}", parse_mode="HTML")
 
 # ========== БАН/РАЗБАН КОМАНДЫ ==========
 @dp.message(Command("ban"))
@@ -773,11 +859,22 @@ async def cancel_mailing(message: types.Message):
 
 # ========== ЗАПУСК ==========
 async def main():
+    # Удаляем вебхук чтобы избежать конфликта
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    print("=" * 50)
     print("🚀 SHADOWVPN БОТ ЗАПУЩЕН")
+    print("=" * 50)
     print(f"📁 База данных: {DB_PATH}")
     print(f"👥 Админы: {ADMIN_IDS}")
-    print(f"⭐ Цена Stars: {STARS_PRICE}")
+    print(f"⭐ Цена Stars: {STARS_PRICE}⭐")
+    print(f"📢 Канал: {REQUIRED_CHANNEL or 'НЕ ЗАДАН'}")
     print(f"🪙 CryptoBot: {'ВКЛЮЧЁН' if CRYPTOBOT_TOKEN else 'ВЫКЛЮЧЕН'}")
+    if CRYPTOBOT_TOKEN:
+        print(f"   Токен: {CRYPTOBOT_TOKEN[:10]}...{CRYPTOBOT_TOKEN[-5:]}")
+    print(f"📞 Контакт админа: {ADMIN_CONTACT}")
+    print("=" * 50)
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
