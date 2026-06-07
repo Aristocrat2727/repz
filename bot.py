@@ -4,16 +4,23 @@ import os
 import aiohttp
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, LabeledPrice
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    BufferedInputFile, LabeledPrice, PreCheckoutQuery
+)
+from aiogram.enums import ContentType
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ===== КОНФИГ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ =====
+# ===== ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ =====
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")  # Токен от @CryptoBot
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
 STARS_PRICE = int(os.getenv("STARS_PRICE", 75))
-# =========================================
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "")
+CHANNEL_URL = os.getenv("CHANNEL_URL", "https://t.me/shadowvpn_news")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")
+# =================================
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -34,9 +41,16 @@ CREATE TABLE IF NOT EXISTS orders (
     crypto_check_id TEXT
 )
 ''')
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    joined_at TEXT
+)
+''')
 conn.commit()
 
-# ТВОЙ КОНФИГ (полный, рабочий)
+# ТВОЙ КОНФИГ
 CONFIG_TEXT = """[Interface]
 PrivateKey = T3n6Sdaijx8WLHYZ1wMlfFv769/DAbLINXqxonGw3r0=
 Address = 172.16.0.2, 2606:4700:110:825f:c471:eeba:e0:da2f
@@ -60,35 +74,44 @@ AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = 162.159.195.6:2408
 PersistentKeepalive = 15"""
 
-# ТЕКСТ СООБЩЕНИЯ
-MESSAGE_TEXT = """🎉 ShadowVPN — полный доступ активирован
+START_TEXT = """🔮 **ShadowVPN** — путь в свободный интернет
 
-♾️ Бессрочная подписка
+🌐 **Обходим любые блокировки**
+🚀 **Максимальная скорость**
+🛡️ **Полная анонимность**
+♾️ **Бессрочный доступ**
 
-✅ Открывает:
-📺 YouTube без рекламы и буфера
-📸 Instagram*, TikTok, Twitch
-🎮 Brawl Stars, Clash — низкий пинг
-🌍 Все заблокированные сервисы РФ
-📱 Discord, Spotify, Netflix
-🔒 Полное шифрование трафика
+✅ **Разблокирует:**
+YouTube, Instagram*, TikTok, Discord, Spotify, Netflix, Twitch, Brawl Stars, Clash
 
-📊 Характеристики:
+📊 **Характеристики:**
 • Выделенные серверы
-• Отсутствие ограничений скорости
+• Нет ограничений скорости
 • Нет логирования
 • Аптайм 99.9%
 
-* Meta признана нежелательной в РФ
+*Meta признана нежелательной в РФ
 
-📲 Установка:
-1️⃣ Скачай AmneziaWG: [Android](https://play.google.com/store/apps/details?id=org.amnezia.vpn) | [iPhone](https://apps.apple.com/app/amneziawg/id6446746462)
-2️⃣ Открой shadow.conf → импорт
-3️⃣ Включи туннель
+💰 **Цена:**
+⭐ {stars_price} Telegram Stars
+💎 100₽ (карта РФ)
+🪙 1 USDT (крипта)
 
-❓ Не работает? Попробуй WireGuard: [Android](https://play.google.com/store/apps/details?id=com.wireguard.android) | [iPhone](https://apps.apple.com/app/wireguard/id1441195209)"""
+📌 **Перед покупкой подпишись на наш канал:**
+{channel_url}
 
-# Функция создания счета в CryptoBot
+После подписки нажми ✅ Я подписался"""
+
+# ========== ФУНКЦИИ ==========
+async def check_subscription(user_id: int) -> bool:
+    if not REQUIRED_CHANNEL:
+        return True
+    try:
+        member = await bot.get_chat_member(REQUIRED_CHANNEL, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
 async def create_crypto_invoice(amount_usd: float, order_id: int) -> tuple:
     async with aiohttp.ClientSession() as session:
         payload = {
@@ -97,19 +120,15 @@ async def create_crypto_invoice(amount_usd: float, order_id: int) -> tuple:
             "description": f"ShadowVPN заказ #{order_id}",
             "hidden_message": f"Оплата заказа #{order_id}",
             "paid_btn_name": "openBot",
-            "paid_btn_url": f"https://t.me/{os.getenv('BOT_USERNAME')}?start=check_{order_id}"
+            "paid_btn_url": f"https://t.me/{BOT_USERNAME}?start=check_{order_id}"
         }
-        headers = {
-            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
-            "Content-Type": "application/json"
-        }
+        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN, "Content-Type": "application/json"}
         async with session.post("https://pay.crypt.bot/api/createInvoice", json=payload, headers=headers) as resp:
             data = await resp.json()
             if data.get("ok"):
                 return data["result"]["bot_url"], data["result"]["invoice_id"]
             return None, None
 
-# Функция проверки статуса счета в CryptoBot
 async def check_crypto_invoice(invoice_id: str) -> str:
     async with aiohttp.ClientSession() as session:
         payload = {"invoice_ids": invoice_id}
@@ -120,31 +139,60 @@ async def check_crypto_invoice(invoice_id: str) -> str:
                 return data["result"]["items"][0]["status"]
     return "unknown"
 
-# Отправка конфига пользователю
 async def send_config_to_user(user_id: int, order_id: int):
     config_bytes = CONFIG_TEXT.encode('utf-8')
     file = BufferedInputFile(config_bytes, filename="shadow.conf")
-    await bot.send_document(user_id, document=file, caption=MESSAGE_TEXT, parse_mode="Markdown")
-    await bot.send_message(ADMIN_ID, f"✅ Конфиг отправлен заказ #{order_id} пользователю")
+    await bot.send_document(user_id, document=file, caption="✅ Твой конфиг ShadowVPN. Импортируй в AmneziaWG и подключайся.")
+    for admin_id in ADMIN_IDS:
+        await bot.send_message(admin_id, f"✅ Конфиг отправлен заказ #{order_id} пользователю")
 
+# ========== ХЕНДЛЕРЫ ПОЛЬЗОВАТЕЛЯ ==========
 @dp.message(Command("start"))
-async def start(message: types.Message):
-    # Обработка callback из CryptoBot
-    if message.text and "start=check_" in message.text:
-        order_id = int(message.text.split("_")[1])
-        await check_payment_command(message, order_id)
+async def start_cmd(message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "без юзернейма"
+    cursor.execute("INSERT OR IGNORE INTO users (user_id, username, joined_at) VALUES (?, ?, ?)",
+                   (user_id, username, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+
+    if REQUIRED_CHANNEL and not await check_subscription(user_id):
+        sub_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Подписаться на канал", url=CHANNEL_URL)],
+            [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]
+        ])
+        await message.answer(START_TEXT.format(channel_url=CHANNEL_URL, stars_price=STARS_PRICE), parse_mode="Markdown", reply_markup=sub_keyboard)
         return
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Оплатить Stars (75⭐)", callback_data="pay_stars")],
-        [InlineKeyboardButton(text="💰 Оплатить криптой (USDT)", callback_data="pay_crypto")],
-        [InlineKeyboardButton(text="💳 Оплатить картой РФ (100₽)", callback_data="pay_card")],
+    main_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Купить ShadowVPN", callback_data="buy_menu")],
         [InlineKeyboardButton(text="📞 Поддержка", callback_data="support")]
     ])
-    await message.answer("💸 ShadowVPN — оплата\n\nВыбери способ:", reply_markup=keyboard)
+    await message.answer("🔮 **ShadowVPN** — твой ключ к свободному интернету\n\nВыбери действие:", parse_mode="Markdown", reply_markup=main_keyboard)
+
+@dp.callback_query(lambda c: c.data == "check_sub")
+async def check_sub_callback(callback: CallbackQuery):
+    if await check_subscription(callback.from_user.id):
+        main_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⭐ Купить ShadowVPN", callback_data="buy_menu")],
+            [InlineKeyboardButton(text="📞 Поддержка", callback_data="support")]
+        ])
+        await callback.message.edit_text("🔮 **ShadowVPN** — твой ключ к свободному интернету\n\nВыбери действие:", parse_mode="Markdown", reply_markup=main_keyboard)
+    else:
+        await callback.answer("❌ Ты не подписан на канал!", show_alert=True)
+
+@dp.callback_query(lambda c: c.data == "buy_menu")
+async def buy_menu(callback: CallbackQuery):
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"⭐ {STARS_PRICE} Stars", callback_data="pay_stars")],
+        [InlineKeyboardButton(text="💰 1 USDT (крипта)", callback_data="pay_crypto")],
+        [InlineKeyboardButton(text="💳 100₽ (карта РФ)", callback_data="pay_card")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+    ])
+    await callback.message.edit_text("💎 **Выбери способ оплаты:**\n\n⭐ Stars — моментально\n💰 USDT — через CryptoBot\n💳 Карта РФ — напишешь админу", parse_mode="Markdown", reply_markup=keyboard)
+    await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "pay_stars")
-async def pay_stars(callback: types.CallbackQuery):
+async def pay_stars(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
 
@@ -153,23 +201,25 @@ async def pay_stars(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
+    prices = [LabeledPrice(label="ShadowVPN — доступ навсегда", amount=STARS_PRICE)]
+
     await bot.send_invoice(
         chat_id=user_id,
-        title="ShadowVPN — доступ навсегда",
-        description=f"Конфиг для AmneziaWG / WireGuard. Цена: {STARS_PRICE} Stars",
+        title="ShadowVPN",
+        description=f"Конфиг для AmneziaWG. Цена: {STARS_PRICE} Stars",
         payload=f"order_{order_id}",
         currency="XTR",
-        prices=[LabeledPrice(label="ShadowVPN", amount=STARS_PRICE)]
+        prices=prices
     )
-    await callback.answer()
+    await callback.answer("⭐ Счёт отправлен! Проверь диалог с ботом.")
 
 @dp.callback_query(lambda c: c.data == "pay_crypto")
-async def pay_crypto(callback: types.CallbackQuery):
+async def pay_crypto(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
 
     cursor.execute("INSERT INTO orders (user_id, username, payment_method, amount, order_status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                   (user_id, username, "crypto", "100₽ (≈1 USDT)", "waiting_payment", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                   (user_id, username, "crypto", "1 USDT", "waiting_payment", datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     order_id = cursor.lastrowid
 
@@ -182,20 +232,19 @@ async def pay_crypto(callback: types.CallbackQuery):
         crypto_keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💸 Перейти к оплате", url=invoice_url)],
             [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{order_id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_menu")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")]
         ])
         await callback.message.edit_text(
-            f"💰 Оплата криптой (USDT)\n\nЗаказ #{order_id}\nСумма: ~1 USDT\n\n1. Нажми «Перейти к оплате»\n2. Оплати через CryptoBot\n3. Нажми «Проверить оплату»\n\nПосле подтверждения конфиг придет автоматически.",
+            f"💰 Оплата криптой (USDT)\n\nЗаказ #{order_id}\nСумма: 1 USDT\n\n1. Нажми «Перейти к оплате»\n2. Оплати через CryptoBot\n3. Нажми «Проверить оплату»\n\nПосле подтверждения конфиг придет автоматически.",
             reply_markup=crypto_keyboard
         )
     else:
-        await callback.message.edit_text("❌ Ошибка создания счета. Попробуй позже или выбери другой способ оплаты.")
+        await callback.message.edit_text("❌ Ошибка создания счета. Попробуй позже.")
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("check_crypto_"))
-async def check_crypto_payment(callback: types.CallbackQuery):
+async def check_crypto_payment(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
-
     cursor.execute("SELECT order_status, crypto_check_id, user_id FROM orders WHERE id = ?", (order_id,))
     row = cursor.fetchone()
     if not row:
@@ -203,13 +252,11 @@ async def check_crypto_payment(callback: types.CallbackQuery):
         return
 
     status, invoice_id, user_id = row
-
     if status == "completed":
-        await callback.answer("✅ Ты уже получил конфиг! Проверь чат.")
+        await callback.answer("✅ Ты уже получил конфиг!")
         return
 
     inv_status = await check_crypto_invoice(invoice_id)
-
     if inv_status == "paid":
         cursor.execute("UPDATE orders SET order_status = ? WHERE id = ?", ("completed", order_id))
         conn.commit()
@@ -222,7 +269,7 @@ async def check_crypto_payment(callback: types.CallbackQuery):
         await callback.answer("⏳ Еще не оплачено. Оплати и нажми снова.", show_alert=True)
 
 @dp.callback_query(lambda c: c.data == "pay_card")
-async def pay_card(callback: types.CallbackQuery):
+async def pay_card(callback: CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "без юзернейма"
 
@@ -231,78 +278,223 @@ async def pay_card(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
+    for admin_id in ADMIN_IDS:
+        await bot.send_message(admin_id, f"🆕 ЗАЯВКА #{order_id}\n👤 @{username}\n💳 Карта\nСтатус: ожидает")
+
     await callback.message.edit_text(
-        f"💳 Оплата картой РФ\n\nЗаказ #{order_id}\nСумма: 100₽\n\n👉 Напиши админу: @admin_username\nУкажи номер заказа #{order_id}\n\nПосле оплаты конфиг придет в этот чат."
+        f"💳 Оплата картой РФ\n\nЗаказ #{order_id}\nСумма: 100₽\n\n👉 Напиши админу: @admin_username\nУкажи номер заказа #{order_id}\n\nПосле оплаты конфиг придет сюда."
     )
     await callback.answer()
-    await bot.send_message(ADMIN_ID, f"🆕 ЗАЯВКА #{order_id}\n👤 @{username}\n💳 Карта\nСтатус: ожидает")
 
 @dp.callback_query(lambda c: c.data == "support")
-async def support(callback: types.CallbackQuery):
-    await callback.message.edit_text("📞 Поддержка: @admin_username\n\nПо всем вопросам пиши сюда.")
+async def support(callback: CallbackQuery):
+    await callback.message.edit_text("📞 **Поддержка:**\n\nПо всем вопросам пиши сюда: @admin_username\n\nОтветим в течение 24 часов.", parse_mode="Markdown")
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⭐ Оплатить Stars (75⭐)", callback_data="pay_stars")],
-        [InlineKeyboardButton(text="💰 Оплатить криптой (USDT)", callback_data="pay_crypto")],
-        [InlineKeyboardButton(text="💳 Оплатить картой РФ (100₽)", callback_data="pay_card")],
+async def back_to_menu(callback: CallbackQuery):
+    main_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⭐ Купить ShadowVPN", callback_data="buy_menu")],
         [InlineKeyboardButton(text="📞 Поддержка", callback_data="support")]
     ])
-    await callback.message.edit_text("💸 ShadowVPN — оплата\n\nВыбери способ:", reply_markup=keyboard)
+    await callback.message.edit_text("🔮 **ShadowVPN** — твой ключ к свободному интернету\n\nВыбери действие:", parse_mode="Markdown", reply_markup=main_keyboard)
     await callback.answer()
 
-@dp.message(Command("send_config"))
-async def send_config_admin(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Нет прав.")
-        return
-    parts = message.text.split()
-    if len(parts) != 2:
-        await message.answer("Использование: /send_config <order_id>")
-        return
-    order_id = int(parts[1])
-    cursor.execute("SELECT user_id, order_status FROM orders WHERE id = ?", (order_id,))
-    row = cursor.fetchone()
-    if not row:
-        await message.answer("Заказ не найден.")
-        return
-    user_id, status = row
-    if status == "completed":
-        await message.answer("Конфиг уже был отправлен.")
-        return
-    cursor.execute("UPDATE orders SET order_status = ? WHERE id = ?", ("completed", order_id))
-    conn.commit()
-    await send_config_to_user(user_id, order_id)
-    await message.answer(f"📁 shadow.conf отправлен по заказу #{order_id}")
-
-@dp.message(Command("orders"))
-async def list_orders_admin(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await message.answer("Нет прав.")
-        return
-    cursor.execute("SELECT id, username, payment_method, amount, order_status FROM orders ORDER BY id DESC LIMIT 20")
-    rows = cursor.fetchall()
-    if not rows:
-        await message.answer("Нет заказов.")
-        return
-    text = "📋 Заказы:\n\n"
-    for row in rows:
-        text += f"#{row[0]} | @{row[1]} | {row[2]} | {row[3]} | {row[4]}\n"
-    await message.answer(text)
-
 @dp.pre_checkout_query()
-async def pre_checkout(query: types.PreCheckoutQuery):
-    await query.answer(ok=True)
+async def pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-@dp.message(F.successful_payment)
-async def successful_payment(message: types.Message):
+@dp.message(F.content_type == ContentType.SUCCESSFUL_PAYMENT)
+async def successful_payment(message: Message):
     payload = message.successful_payment.invoice_payload
     order_id = int(payload.split("_")[1])
     cursor.execute("UPDATE orders SET order_status = ? WHERE id = ?", ("completed", order_id))
     conn.commit()
     await send_config_to_user(message.chat.id, order_id)
+
+# ========== АДМИН-ПАНЕЛЬ ==========
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Нет прав.")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Список заказов", callback_data="admin_orders")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")]
+    ])
+    await message.answer("🔧 **Админ-панель ShadowVPN**\n\nВыбери действие:", parse_mode="Markdown", reply_markup=keyboard)
+
+@dp.callback_query(lambda c: c.data == "admin_orders")
+async def admin_orders(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+
+    cursor.execute("SELECT id, username, payment_method, amount, order_status FROM orders ORDER BY id DESC LIMIT 30")
+    rows = cursor.fetchall()
+    if not rows:
+        await callback.message.edit_text("📭 Нет заказов.")
+        return
+
+    text = "📋 **Список заказов:**\n\n"
+    for row in rows:
+        status_emoji = "✅" if row[4] == "completed" else "⏳"
+        text += f"{status_emoji} #{row[0]} | @{row[1]} | {row[2]} | {row[3]}\n"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Посмотреть заказ", callback_data="view_order")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")]
+    ])
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "view_order")
+async def view_order_prompt(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+    await callback.message.edit_text("📝 Введите номер заказа командой:\n`/order 123`", parse_mode="Markdown")
+    await callback.answer()
+
+@dp.message(Command("order"))
+async def view_order(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Нет прав.")
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("Использование: `/order 123`", parse_mode="Markdown")
+        return
+
+    order_id = int(parts[1])
+    cursor.execute("SELECT id, user_id, username, payment_method, amount, order_status FROM orders WHERE id = ?", (order_id,))
+    row = cursor.fetchone()
+    if not row:
+        await message.answer("❌ Заказ не найден.")
+        return
+
+    _, user_id, username, method, amount, status = row
+    status_text = "✅ Выполнен" if status == "completed" else "⏳ Ожидает оплаты"
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Отправить конфиг", callback_data=f"send_conf_{order_id}")],
+        [InlineKeyboardButton(text="❌ Отменить заказ", callback_data=f"cancel_order_{order_id}")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin_orders")]
+    ])
+
+    await message.answer(
+        f"📦 **Заказ #{order_id}**\n\n"
+        f"👤 Пользователь: @{username}\n"
+        f"🆔 User ID: `{user_id}`\n"
+        f"💳 Способ: {method}\n"
+        f"💰 Сумма: {amount}\n"
+        f"📌 Статус: {status_text}",
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("send_conf_"))
+async def send_config_by_admin(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+
+    order_id = int(callback.data.split("_")[2])
+    cursor.execute("SELECT user_id, order_status FROM orders WHERE id = ?", (order_id,))
+    row = cursor.fetchone()
+    if not row:
+        await callback.answer("Заказ не найден")
+        return
+
+    user_id, status = row
+    if status == "completed":
+        await callback.answer("Конфиг уже был отправлен")
+        return
+
+    cursor.execute("UPDATE orders SET order_status = ? WHERE id = ?", ("completed", order_id))
+    conn.commit()
+    await send_config_to_user(user_id, order_id)
+    await callback.message.edit_text(f"✅ Конфиг для заказа #{order_id} отправлен!")
+    await callback.answer("Конфиг отправлен")
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("cancel_order_"))
+async def cancel_order(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+
+    order_id = int(callback.data.split("_")[2])
+    cursor.execute("UPDATE orders SET order_status = ? WHERE id = ?", ("cancelled", order_id))
+    conn.commit()
+    await callback.message.edit_text(f"❌ Заказ #{order_id} отменен.")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+
+    cursor.execute("SELECT COUNT(*) FROM orders")
+    total_orders = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM orders WHERE order_status = 'completed'")
+    completed = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+
+    await callback.message.edit_text(
+        f"📊 **Статистика ShadowVPN**\n\n"
+        f"👥 Всего пользователей: {total_users}\n"
+        f"📦 Всего заказов: {total_orders}\n"
+        f"✅ Выполнено: {completed}\n"
+        f"⏳ Ожидают: {total_orders - completed}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")]])
+    )
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "admin_users")
+async def admin_users(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+
+    cursor.execute("SELECT user_id, username, joined_at FROM users ORDER BY joined_at DESC LIMIT 20")
+    rows = cursor.fetchall()
+    if not rows:
+        await callback.message.edit_text("📭 Нет пользователей.")
+        return
+
+    text = "👥 **Последние пользователи:**\n\n"
+    for row in rows:
+        text += f"🆔 `{row[0]}` | @{row[1]} | {row[2]}\n"
+
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_admin")]]))
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "back_to_admin")
+async def back_to_admin(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📋 Список заказов", callback_data="admin_orders")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users")]
+    ])
+    await callback.message.edit_text("🔧 **Админ-панель ShadowVPN**\n\nВыбери действие:", parse_mode="Markdown", reply_markup=keyboard)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "back_to_admin_orders")
+async def back_to_admin_orders(callback: CallbackQuery):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав")
+        return
+    await admin_orders(callback)
 
 async def main():
     await dp.start_polling(bot)
