@@ -278,7 +278,7 @@ async def on_successful_payment(message: types.Message):
     await send_config(message.chat.id, order_id)
     await message.answer("⭐ Спасибо за покупку!")
 
-# ========== ОПЛАТА КАРТОЙ ==========
+# ========== ОПЛАТА КАРТОЙ (ПИЗДАТАЯ ВЕРСИЯ) ==========
 @dp.callback_query(lambda c: c.data == "pay_card")
 async def card_pay(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -303,6 +303,9 @@ async def card_pay(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
+    # Удаляем старое сообщение с меню выбора оплаты
+    await callback.message.delete()
+    
     # Клавиатура с кнопкой "Я ОПЛАТИЛ"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -327,7 +330,7 @@ async def card_pay(callback: types.CallbackQuery):
         ]
     )
 
-    await callback.message.edit_text(
+    await callback.message.answer(
         f"💳 <b>ОПЛАТА КАРТОЙ РФ</b>\n\n"
         f"📦 <b>Заказ #{order_id}</b>\n"
         f"💰 <b>Стоимость:</b> 100₽\n\n"
@@ -491,7 +494,10 @@ async def crypto_pay(callback: types.CallbackQuery):
 
                 keyboard.adjust(1)
 
-                await callback.message.edit_text(
+                # Удаляем старое сообщение
+                await callback.message.delete()
+
+                await callback.message.answer(
                     f"🪙 <b>ОПЛАТА CRYPTO (USDT)</b>\n\n"
                     f"📦 Заказ: #{order_id}\n"
                     f"💰 Сумма: 1 USDT\n"
