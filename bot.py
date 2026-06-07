@@ -284,11 +284,14 @@ async def card_pay(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     username = callback.from_user.username or "no_username"
 
-    cursor.execute("INSERT INTO orders (user_id, username, payment_method, amount, order_status, created_at) VALUES (?,?,?,?,?,?)",
-                   (user_id, username, "card", "100₽", "waiting", datetime.now().isoformat()))
+    cursor.execute(
+        "INSERT INTO orders (user_id, username, payment_method, amount, order_status, created_at) VALUES (?,?,?,?,?,?)",
+        (user_id, username, "card", "100₽", "waiting", datetime.now().isoformat())
+    )
     conn.commit()
     order_id = cursor.lastrowid
 
+    # Уведомление админу
     for admin_id in ADMIN_IDS:
         await bot.send_message(
             admin_id,
@@ -300,30 +303,122 @@ async def card_pay(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
-        [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
-    ])
+    # Клавиатура с кнопкой "Я ОПЛАТИЛ"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👨‍💻 НАПИСАТЬ АДМИНУ",
+                    url="https://t.me/Withoutx4"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я ОПЛАТИЛ",
+                    callback_data=f"paid_card_{order_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ НАЗАД",
+                    callback_data="buy_menu"
+                )
+            ]
+        ]
+    )
 
     await callback.message.edit_text(
         f"💳 <b>ОПЛАТА КАРТОЙ РФ</b>\n\n"
-        f"📦 <b>ЗАКАЗ #{order_id}</b>\n"
-        f"💰 <b>Сумма:</b> 100₽\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📞 <b>НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
-        f"Админ отправит тебе реквизиты для оплаты\n"
-        f"и поможет с получением конфига.\n"
+        f"📦 <b>Заказ #{order_id}</b>\n"
+        f"💰 <b>Стоимость:</b> 100₽\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📝 <b>Укажи в сообщении админу:</b>\n"
-        f"«Заказ #{order_id}, хочу оплатить картой»\n\n"
-        f"⏳ После оплаты конфиг придёт в этот чат.",
+        f"👨‍💻 <b>Шаг 1:</b> Напишите администратору\n"
+        f"{ADMIN_CONTACT}\n\n"
+        f"📨 Он отправит вам реквизиты для оплаты\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ <b>Шаг 2:</b> После оплаты нажмите «Я ОПЛАТИЛ»\n\n"
+        f"⚠️ <b>Важно:</b> обязательно укажите в сообщении админу:\n"
+        f"<code>Заказ #{order_id}</code>\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⏳ После подтверждения оплаты\n"
+        f"конфиг будет отправлен автоматически в этот чат.",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data and c.data.startswith("paid_card_"))
+async def paid_card(callback: types.CallbackQuery):
+    """Обработчик кнопки 'Я ОПЛАТИЛ'"""
+    order_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    username = callback.from_user.username or "no_username"
+
+    # Проверяем статус заказа
+    cursor.execute("SELECT order_status FROM orders WHERE id = ?", (order_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        await callback.answer("❌ Заказ не найден", show_alert=True)
+        return
+    
+    if row[0] == "completed":
+        await callback.answer("✅ Конфиг уже был отправлен!", show_alert=True)
+        return
+
+    # Отправляем уведомление админам
+    for admin_id in ADMIN_IDS:
+        await bot.send_message(
+            admin_id,
+            f"🔔 <b>ЗАЯВКА ОБ ОПЛАТЕ</b>\n\n"
+            f"📦 Заказ: #{order_id}\n"
+            f"👤 Пользователь: @{username}\n"
+            f"🆔 ID: <code>{user_id}</code>\n\n"
+            f"💰 Сумма: 100₽\n\n"
+            f"📌 Проверь оплату и введи команду:\n"
+            f"<code>/send_config {order_id}</code>",
+            parse_mode="HTML"
+        )
+
+    # Клавиатура после нажатия
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="👨‍💻 НАПИСАТЬ АДМИНУ",
+                    url="https://t.me/Withoutx4"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="◀️ ГЛАВНОЕ МЕНЮ",
+                    callback_data="back_main"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_text(
+        f"✅ <b>ЗАЯВКА ОТПРАВЛЕНА!</b>\n\n"
+        f"📦 Заказ: #{order_id}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👨‍💻 <b>Что делать дальше?</b>\n\n"
+        f"1️⃣ Админ уже получил уведомление\n"
+        f"2️⃣ Он проверит оплату\n"
+        f"3️⃣ Конфиг придёт в этот чат\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"⚠️ <b>Если конфиг не пришёл в течение 15 минут</b>\n"
+        f"напишите админу: {ADMIN_CONTACT}\n\n"
+        f"📝 Укажите в сообщении: «Заказ #{order_id}»",
         parse_mode="HTML",
         reply_markup=keyboard
     )
     
-    await callback.answer()
+    await callback.answer("✅ Уведомление отправлено админу!")
 
-# ========== ОПЛАТА КРИПТОЙ (ТВОЙ КОД) ==========
+# ========== ОПЛАТА КРИПТОЙ ==========
 @dp.callback_query(lambda c: c.data == "pay_crypto")
 async def crypto_pay(callback: types.CallbackQuery):
     if not CRYPTOBOT_TOKEN:
@@ -411,7 +506,7 @@ async def crypto_pay(callback: types.CallbackQuery):
 
     await callback.answer()
 
-# ========== ПРОВЕРКА ОПЛАТЫ КРИПТОЙ (ТВОЙ КОД) ==========
+
 @dp.callback_query(lambda c: c.data.startswith("check_crypto_"))
 async def check_crypto(callback: types.CallbackQuery):
     invoice_id = callback.data.replace("check_crypto_", "")
