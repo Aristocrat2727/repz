@@ -278,6 +278,7 @@ async def on_successful_payment(message: types.Message):
     await message.answer("⭐ Спасибо за покупку!")
 
 # ========== ОПЛАТА КАРТОЙ (ИСПРАВЛЕНА) ==========
+# ========== ОПЛАТА КАРТОЙ (КАК В CRYPTOBOT - ТЕКСТ + КНОПКА) ==========
 @dp.callback_query(lambda c: c.data == "pay_card")
 async def card_pay(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -290,39 +291,36 @@ async def card_pay(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
+    # Уведомление админу
     for admin_id in ADMIN_IDS:
         await bot.send_message(
             admin_id,
             f"💳 <b>НОВЫЙ ЗАКАЗ #{order_id}</b>\n\n"
             f"👤 Пользователь: @{username}\n"
             f"🆔 ID: <code>{user_id}</code>\n"
-            f"💰 Сумма: 100₽\n\n"
-            f"📌 Статус: ожидает оплаты",
+            f"💰 Сумма: 100₽",
             parse_mode="HTML"
         )
 
     # Удаляем старое сообщение с меню выбора оплаты
     await callback.message.delete()
     
+    # Кнопка с URL как в CryptoBot
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍💻 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
+        [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
         [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"paid_card_{order_id}")],
         [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
     ])
 
     await callback.message.answer(
         f"💳 <b>ОПЛАТА КАРТОЙ РФ</b>\n\n"
-        f"📦 <b>Заказ #{order_id}</b>\n"
-        f"💰 <b>Стоимость:</b> 100₽\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 <b>ИНСТРУКЦИЯ:</b>\n\n"
-        f"1️⃣ Нажмите «НАПИСАТЬ АДМИНУ»\n"
-        f"2️⃣ Спросите у админа реквизиты\n"
-        f"3️⃣ Оплатите 100₽ на карту\n"
-        f"4️⃣ Вернитесь сюда и нажмите «Я ОПЛАТИЛ»\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ <b>Важно!</b> Укажите админу номер заказа: #{order_id}\n\n"
-        f"⏳ После подтверждения оплаты конфиг придёт сюда",
+        f"📦 Заказ: #{order_id}\n"
+        f"💰 Сумма: 100₽\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📌 Напишите администратору, он отправит реквизиты для оплаты.\n\n"
+        f"⚠️ Обязательно укажите номер заказа: #{order_id}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ После оплаты нажмите «Я ОПЛАТИЛ»",
         parse_mode="HTML",
         reply_markup=keyboard
     )
@@ -347,6 +345,7 @@ async def paid_card(callback: types.CallbackQuery):
         await callback.answer("✅ Конфиг уже отправлен!", show_alert=True)
         return
 
+    # Уведомление админам
     for admin_id in ADMIN_IDS:
         await bot.send_message(
             admin_id,
@@ -359,20 +358,15 @@ async def paid_card(callback: types.CallbackQuery):
         )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👨‍💻 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
         [InlineKeyboardButton(text="◀️ ГЛАВНОЕ МЕНЮ", callback_data="back_main")]
     ])
 
     await callback.message.edit_text(
         f"✅ <b>ЗАЯВКА ОТПРАВЛЕНА!</b>\n\n"
         f"📦 Заказ: #{order_id}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👨‍💻 Админ уже получил уведомление\n\n"
-        f"⏳ Обычно конфиг приходит в течение 15 минут\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ Если конфиг не пришёл - напишите админу:\n"
-        f"{ADMIN_CONTACT}\n"
-        f"📝 Укажите: «Заказ #{order_id}»",
+        f"Админ получил уведомление.\n"
+        f"Конфиг придёт сюда после проверки оплаты.\n\n"
+        f"⏳ Обычно это занимает до 15 минут.",
         parse_mode="HTML",
         reply_markup=keyboard
     )
