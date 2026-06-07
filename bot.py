@@ -20,16 +20,22 @@ STARS_PRICE = int(os.getenv("STARS_PRICE", 75))
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "")
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
-DB_PATH = os.getenv("DB_PATH", "database.db")
+DB_PATH = os.getenv("DB_PATH", "/data/database.db")
 
 # Контакт админа
 ADMIN_CONTACT = "@Withoutx4"
+
+# Создаём директорию для БД если её нет
+db_dir = os.path.dirname(DB_PATH)
+if db_dir and not os.path.exists(db_dir):
+    os.makedirs(db_dir, exist_ok=True)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # ========== БАЗА ДАННЫХ ==========
-conn = sqlite3.connect(DB_PATH)
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+conn.execute("PRAGMA journal_mode=WAL")
 cursor = conn.cursor()
 
 cursor.execute("""
@@ -150,20 +156,43 @@ async def check_subscription(user_id: int) -> bool:
 
 async def create_crypto_invoice(amount_usd: float, order_id: int):
     if not CRYPTOBOT_TOKEN:
+        print("❌ CRYPTOBOT_TOKEN не задан")
         return None, None
+    
     async with aiohttp.ClientSession() as session:
+        url = "https://pay.crypt.bot/api/createInvoice"
+        
         payload = {
             "asset": "USDT",
             "amount": str(amount_usd),
             "description": f"ShadowVPN #{order_id}",
             "paid_btn_name": "openBot",
-            "paid_btn_url": f"https://t.me/{BOT_USERNAME}"
+            "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
+            "currency_type": "fiat"
         }
-        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN, "Content-Type": "application/json"}
-        async with session.post("https://pay.crypt.bot/api/createInvoice", json=payload, headers=headers) as resp:
-            data = await resp.json()
-            if data.get("ok"):
-                return data["result"]["bot_url"], str(data["result"]["invoice_id"])
+        
+        headers = {
+            "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
+            "Content-Type": "application/json"
+        }
+        
+        try:
+            print(f"🔄 Создаю инвойс для заказа #{order_id}")
+            async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
+                data = await resp.json()
+                print(f"📥 Ответ CryptoBot: {data}")
+                
+                if data.get("ok"):
+                    print(f"✅ Инвойс создан! ID: {data['result']['invoice_id']}")
+                    return data["result"]["bot_url"], str(data["result"]["invoice_id"])
+                else:
+                    print(f"❌ Ошибка CryptoBot: {data}")
+                    return None, None
+        except asyncio.TimeoutError:
+            print("❌ Таймаут при запросе к CryptoBot")
+            return None, None
+        except Exception as e:
+            print(f"❌ Исключение CryptoBot: {e}")
             return None, None
 
 async def check_crypto_payment(invoice_id: str) -> str:
@@ -356,14 +385,31 @@ async def card_pay(callback: types.CallbackQuery):
         f"🏦 Сбербанк / Тинькофф\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"⬇️ <b>ПОСЛЕ ОПЛАТЫ НАЖМИ:</b> «Я ОПЛАТИЛ»\n"
-        f"📞 <b>ИЛИ НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
+        f"📞 <b>ОБЯЗАТЕЛЬНО НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
         f"⚠️ <i>Укажи номер заказа #{order_id}, чтобы конфиг пришёл быстрее</i>\n\n"
         f"📲 <b>ПОСЛЕ ПОЛУЧЕНИЯ КОНФИГА:</b>\n"
         f"🤖 Android: <a href='https://play.google.com/store/apps/details?id=org.amnezia.vpn'>AmneziaWG</a> | <a href='https://play.google.com/store/apps/details?id=com.wireguard.android'>WireGuard</a>\n"
-        f"🍏 iPhone: <a href='https://apps.apple.com/app/amneziawg/id6446746462'>AmneziaWG</a> | <a href='https://apps.apple.com/app/wireguard/id1441195209'>WireGuard</a>",
+        f"🍏 iPhone: <a href='https://apps.apple.com/app/amneziawg/id6446746462'>AmneziaWG</a> | <a href='https://play.google.com/store/apps/details?id=com.wireguard.android'>WireGuard</a>",
         parse_mode="HTML",
         reply_markup=card_keyboard
     )
+    
+    # Дополнительное сообщение с напоминанием
+    await callback.message.answer(
+        f"📢 <b>ВАЖНОЕ УВЕДОМЛЕНИЕ!</b>\n\n"
+        f"После оплаты картой, ОБЯЗАТЕЛЬНО напиши админу:\n"
+        f"{ADMIN_CONTACT}\n\n"
+        f"📝 <b>Текст сообщения:</b>\n"
+        f"«Оплатил заказ #{order_id}»\n\n"
+        f"⚡ Конфиг пришлют в течение 15 минут после подтверждения оплаты.\n\n"
+        f"❌ Без сообщения админу конфиг не будет отправлен!",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
+            [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"paid_card_{order_id}")]
+        ])
+    )
+    
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data and c.data.startswith("paid_card_"))
@@ -383,18 +429,20 @@ async def paid_card(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    await callback.message.edit_text(
+    await callback.message.answer(
         f"✅ <b>ЗАЯВКА ОТПРАВЛЕНА!</b>\n\n"
         f"📦 Заказ: #{order_id}\n\n"
-        f"Админ проверит оплату и отправит конфиг.\n"
-        f"⏳ Обычно до 15 минут.\n\n"
+        f"⚠️ <b>НЕ ЗАБУДЬ НАПИСАТЬ АДМИНУ:</b> {ADMIN_CONTACT}\n"
+        f"📝 <b>Укажи в сообщении:</b> «Оплатил заказ #{order_id}»\n\n"
+        f"⏳ После подтверждения оплаты конфиг придёт в этот чат.\n"
         f"📞 Вопросы: {ADMIN_CONTACT}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
             [InlineKeyboardButton(text="◀️ ГЛАВНОЕ МЕНЮ", callback_data="back_main")]
         ])
     )
-    await callback.answer("✅ Уведомление отправлено")
+    await callback.answer("✅ Уведомление отправлено админу! Не забудь написать админу")
 
 # ========== ОПЛАТА КРИПТОЙ ==========
 @dp.callback_query(lambda c: c.data == "pay_crypto")
@@ -431,7 +479,7 @@ async def crypto_pay(callback: types.CallbackQuery):
             f"1️⃣ Нажми «ПЕРЕЙТИ К ОПЛАТЕ»\n"
             f"2️⃣ Оплати в @CryptoBot\n"
             f"3️⃣ Нажми «ПРОВЕРИТЬ ОПЛАТУ»\n\n"
-            f"⚠️ Конфиг придёт автоматически!",
+            f"⚠️ Конфиг придёт автоматически после оплаты!",
             parse_mode="HTML",
             reply_markup=crypto_btn
         )
@@ -439,9 +487,9 @@ async def crypto_pay(callback: types.CallbackQuery):
         await callback.message.edit_text(
             f"❌ <b>ОШИБКА СОЗДАНИЯ СЧЁТА</b>\n\n"
             f"Проверь:\n"
-            f"1. CRYPTOBOT_TOKEN в переменных\n"
-            f"2. BOT_USERNAME (без @)\n"
-            f"3. @CryptoBot дал права боту\n\n"
+            f"1. Включены ли API методы в @CryptoBot\n"
+            f"2. CRYPTOBOT_TOKEN в переменных Railway\n"
+            f"3. BOT_USERNAME (без @)\n\n"
             f"📞 Напиши админу: {ADMIN_CONTACT}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -458,7 +506,7 @@ async def check_crypto_payment_handler(callback: types.CallbackQuery):
     row = cursor.fetchone()
 
     if not row:
-        await callback.answer("Заказ не найден")
+        await callback.answer("❌ Заказ не найден")
         return
 
     status, invoice_id, user_id = row
@@ -467,14 +515,16 @@ async def check_crypto_payment_handler(callback: types.CallbackQuery):
         await callback.answer("✅ Конфиг уже выдан!", show_alert=True)
         return
 
+    await callback.answer("🔄 Проверяю статус платежа...")
+    
     inv_status = await check_crypto_payment(invoice_id)
 
     if inv_status == "paid":
         cursor.execute("UPDATE orders SET order_status = ?, completed_at = ? WHERE id = ?", ("completed", datetime.now().isoformat(), order_id))
         conn.commit()
         await send_config(user_id, order_id)
-        await callback.message.edit_text("✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\nКонфиг отправлен выше.", parse_mode="HTML")
-        await callback.answer("Конфиг отправлен!")
+        await callback.message.edit_text("✅ <b>ОПЛАТА ПОДТВЕРЖДЕНА!</b>\n\nКонфиг отправлен выше.", parse_mode="HTML")
+        await callback.answer("✅ Конфиг отправлен!")
     elif inv_status == "expired":
         await callback.answer("❌ Счёт просрочен. Создай новый заказ", show_alert=True)
     else:
@@ -491,6 +541,47 @@ async def admin_panel(message: types.Message):
         await message.answer("❌ <b>НЕТ ДОСТУПА</b>", parse_mode="HTML")
         return
     await message.answer("🔧 <b>АДМИН-ПАНЕЛЬ SHADOWVPN</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=Keyboards.admin_main())
+
+@dp.message(Command("check_crypto"))
+async def check_crypto_bot(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Нет прав")
+        return
+    
+    if not CRYPTOBOT_TOKEN:
+        await message.answer("❌ CRYPTOBOT_TOKEN не задан в переменных окружения Railway")
+        return
+    
+    status_msg = await message.answer("🔄 Проверяю подключение к CryptoBot...")
+    
+    async with aiohttp.ClientSession() as session:
+        url = "https://pay.crypt.bot/api/getMe"
+        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
+        
+        try:
+            async with session.post(url, headers=headers, timeout=10) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    await status_msg.edit_text(
+                        f"✅ <b>CryptoBot подключён успешно!</b>\n\n"
+                        f"🤖 Приложение: {data['result'].get('name', 'Unknown')}\n"
+                        f"🆔 ID: {data['result']['id']}\n\n"
+                        f"📌 <b>Проверь в @CryptoBot:</b>\n"
+                        f"• Метод createInvoice: Вкл.\n"
+                        f"• Метод getInvoices: Вкл.\n\n"
+                        f"🎯 Теперь крипто-оплата должна работать!",
+                        parse_mode="HTML"
+                    )
+                else:
+                    await status_msg.edit_text(
+                        f"❌ <b>Ошибка подключения к CryptoBot</b>\n\n"
+                        f"Ответ: {data}\n\n"
+                        f"Проверь CRYPTOBOT_TOKEN в переменных Railway\n"
+                        f"И включи API методы в @CryptoBot",
+                        parse_mode="HTML"
+                    )
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка: {e}")
 
 @dp.callback_query(lambda c: c.data == "admin_orders")
 async def admin_orders(callback: types.CallbackQuery):
@@ -764,6 +855,7 @@ async def cancel_mailing(message: types.Message):
 # ========== ЗАПУСК ==========
 async def main():
     print("🚀 SHADOWVPN БОТ ЗАПУЩЕН")
+    print(f"📁 База данных: {DB_PATH}")
     print(f"👥 Админы: {ADMIN_IDS}")
     print(f"⭐ Цена Stars: {STARS_PRICE}")
     print(f"📢 Канал: {REQUIRED_CHANNEL or 'НЕ ЗАДАН'}")
