@@ -350,16 +350,11 @@ async def card_pay(callback: types.CallbackQuery):
             f"👤 Пользователь: @{username}\n"
             f"🆔 ID: <code>{user_id}</code>\n"
             f"💰 Сумма: 100₽\n\n"
-            f"📌 Статус: ожидает оплаты\n\n"
-            f"💡 После проверки оплаты введи: /send_config {order_id}",
+            f"📌 Статус: ожидает оплаты",
             parse_mode="HTML"
         )
 
-    card_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💎 2200 1234 5678 9012", callback_data="noop")],
-        [InlineKeyboardButton(text="🏦 Сбербанк / Тинькофф", callback_data="noop")],
-        [InlineKeyboardButton(text="💰 Сумма: 100₽", callback_data="noop")],
-        [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"paid_card_{order_id}")],
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
         [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
     ])
@@ -369,68 +364,18 @@ async def card_pay(callback: types.CallbackQuery):
         f"📦 <b>ЗАКАЗ #{order_id}</b>\n"
         f"💰 <b>Сумма:</b> 100₽\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💎 <b>РЕКВИЗИТЫ ДЛЯ ОПЛАТЫ:</b>\n"
-        f"<code>2200 1234 5678 9012</code>\n"
-        f"🏦 Сбербанк / Тинькофф\n"
+        f"📞 <b>НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
+        f"Админ отправит тебе реквизиты для оплаты\n"
+        f"и поможет с получением конфига.\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"⬇️ <b>ПОСЛЕ ОПЛАТЫ НАЖМИ:</b> «Я ОПЛАТИЛ»\n"
-        f"📞 <b>ИЛИ НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
-        f"⚠️ <i>Укажи номер заказа #{order_id}, чтобы конфиг пришёл быстрее</i>\n\n"
-        f"📲 <b>ПОСЛЕ ПОЛУЧЕНИЯ КОНФИГА:</b>\n"
-        f"🤖 Android: <a href='https://play.google.com/store/apps/details?id=org.amnezia.vpn'>AmneziaWG</a> | <a href='https://play.google.com/store/apps/details?id=com.wireguard.android'>WireGuard</a>\n"
-        f"🍏 iPhone: <a href='https://apps.apple.com/app/amneziawg/id6446746462'>AmneziaWG</a> | <a href='https://play.google.com/store/apps/details?id=com.wireguard.android'>WireGuard</a>",
+        f"📝 <b>Укажи в сообщении админу:</b>\n"
+        f"«Заказ #{order_id}, хочу оплатить картой»\n\n"
+        f"⏳ После оплаты конфиг придёт в этот чат.",
         parse_mode="HTML",
-        reply_markup=card_keyboard
-    )
-    
-    await callback.message.answer(
-        f"📢 <b>ВАЖНОЕ УВЕДОМЛЕНИЕ!</b>\n\n"
-        f"После оплаты картой, ОБЯЗАТЕЛЬНО напиши админу:\n"
-        f"{ADMIN_CONTACT}\n\n"
-        f"📝 <b>Текст сообщения:</b>\n"
-        f"«Оплатил заказ #{order_id}»\n\n"
-        f"⚡ Конфиг пришлют в течение 15 минут после подтверждения оплаты.\n\n"
-        f"❌ Без сообщения админу конфиг не будет отправлен!",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
-            [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"paid_card_{order_id}")]
-        ])
+        reply_markup=keyboard
     )
     
     await callback.answer()
-
-@dp.callback_query(lambda c: c.data and c.data.startswith("paid_card_"))
-async def paid_card(callback: types.CallbackQuery):
-    order_id = int(callback.data.split("_")[2])
-    user_id = callback.from_user.id
-    username = callback.from_user.username or "no_username"
-
-    for admin_id in ADMIN_IDS:
-        await bot.send_message(
-            admin_id,
-            f"🔔 <b>ЗАЯВКА ОБ ОПЛАТЕ</b>\n\n"
-            f"📦 Заказ: #{order_id}\n"
-            f"👤 @{username}\n"
-            f"🆔 ID: <code>{user_id}</code>\n\n"
-            f"Проверь оплату и введи: /send_config {order_id}",
-            parse_mode="HTML"
-        )
-
-    await callback.message.answer(
-        f"✅ <b>ЗАЯВКА ОТПРАВЛЕНА!</b>\n\n"
-        f"📦 Заказ: #{order_id}\n\n"
-        f"⚠️ <b>НЕ ЗАБУДЬ НАПИСАТЬ АДМИНУ:</b> {ADMIN_CONTACT}\n"
-        f"📝 <b>Укажи в сообщении:</b> «Оплатил заказ #{order_id}»\n\n"
-        f"⏳ После подтверждения оплаты конфиг придёт в этот чат.\n"
-        f"📞 Вопросы: {ADMIN_CONTACT}",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
-            [InlineKeyboardButton(text="◀️ ГЛАВНОЕ МЕНЮ", callback_data="back_main")]
-        ])
-    )
-    await callback.answer("✅ Уведомление отправлено админу! Не забудь написать админу")
 
 # ========== ОПЛАТА КРИПТОЙ ==========
 @dp.callback_query(lambda c: c.data == "pay_crypto")
@@ -515,7 +460,7 @@ async def check_crypto_payment_handler(callback: types.CallbackQuery):
 async def noop_handler(callback: types.CallbackQuery):
     await callback.answer("ℹ️ Информация", show_alert=False)
 
-# ========== АДМИН-ПАНЕЛЬ (ПОЛНАЯ) ==========
+# ========== АДМИН-ПАНЕЛЬ ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
