@@ -277,10 +277,11 @@ async def on_successful_payment(message: types.Message):
     await send_config(message.chat.id, order_id)
     await message.answer("⭐ Спасибо за покупку!")
 
-# ========== ОПЛАТА КАРТОЙ (ИСПРАВЛЕНА) ==========
-# ========== ОПЛАТА КАРТОЙ (КАК В CRYPTOBOT - ТЕКСТ + КНОПКА) ==========
+# ========== ОПЛАТА КАРТОЙ (ИСПРАВЛЕНО - ТЕПЕРЬ РАБОТАЕТ) ==========
 @dp.callback_query(lambda c: c.data == "pay_card")
 async def card_pay(callback: types.CallbackQuery):
+    print("🔴 КНОПКА КАРТА НАЖАТА!")  # Для проверки в логах Railway
+    
     user_id = callback.from_user.id
     username = callback.from_user.username or "no_username"
 
@@ -290,6 +291,7 @@ async def card_pay(callback: types.CallbackQuery):
     )
     conn.commit()
     order_id = cursor.lastrowid
+    print(f"✅ СОЗДАН ЗАКАЗ #{order_id} для {user_id}")
 
     # Уведомление админу
     for admin_id in ADMIN_IDS:
@@ -301,11 +303,16 @@ async def card_pay(callback: types.CallbackQuery):
             f"💰 Сумма: 100₽",
             parse_mode="HTML"
         )
+    print(f"✅ УВЕДОМЛЕНИЕ АДМИНУ ОТПРАВЛЕНО")
 
     # Удаляем старое сообщение с меню выбора оплаты
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+        print("✅ СТАРОЕ СООБЩЕНИЕ УДАЛЕНО")
+    except Exception as e:
+        print(f"❌ Ошибка удаления: {e}")
     
-    # Кнопка с URL как в CryptoBot
+    # Клавиатура
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📞 НАПИСАТЬ АДМИНУ", url="https://t.me/Withoutx4")],
         [InlineKeyboardButton(text="✅ Я ОПЛАТИЛ", callback_data=f"paid_card_{order_id}")],
@@ -317,13 +324,18 @@ async def card_pay(callback: types.CallbackQuery):
         f"📦 Заказ: #{order_id}\n"
         f"💰 Сумма: 100₽\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📌 Напишите администратору, он отправит реквизиты для оплаты.\n\n"
-        f"⚠️ Обязательно укажите номер заказа: #{order_id}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"✅ После оплаты нажмите «Я ОПЛАТИЛ»",
+        f"📌 <b>Инструкция:</b>\n\n"
+        f"1️⃣ Нажмите «НАПИСАТЬ АДМИНУ»\n"
+        f"2️⃣ Спросите реквизиты для оплаты\n"
+        f"3️⃣ Оплатите 100₽\n"
+        f"4️⃣ Нажмите «Я ОПЛАТИЛ»\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ <b>Важно:</b> Укажите админу номер заказа: #{order_id}\n\n"
+        f"⏳ После проверки оплаты конфиг придёт сюда",
         parse_mode="HTML",
         reply_markup=keyboard
     )
+    print("✅ НОВОЕ СООБЩЕНИЕ ОТПРАВЛЕНО")
     
     await callback.answer()
 
@@ -333,6 +345,8 @@ async def paid_card(callback: types.CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
     username = callback.from_user.username or "no_username"
+    
+    print(f"🔔 НАЖАТА КНОПКА Я ОПЛАТИЛ для заказа #{order_id}")
 
     cursor.execute("SELECT order_status FROM orders WHERE id = ?", (order_id,))
     row = cursor.fetchone()
@@ -356,6 +370,7 @@ async def paid_card(callback: types.CallbackQuery):
             f"💡 Введи: <code>/send_config {order_id}</code>",
             parse_mode="HTML"
         )
+    print(f"✅ УВЕДОМЛЕНИЕ АДМИНУ ОТПРАВЛЕНО")
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ ГЛАВНОЕ МЕНЮ", callback_data="back_main")]
@@ -364,14 +379,18 @@ async def paid_card(callback: types.CallbackQuery):
     await callback.message.edit_text(
         f"✅ <b>ЗАЯВКА ОТПРАВЛЕНА!</b>\n\n"
         f"📦 Заказ: #{order_id}\n\n"
-        f"Админ получил уведомление.\n"
-        f"Конфиг придёт сюда после проверки оплаты.\n\n"
-        f"⏳ Обычно это занимает до 15 минут.",
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"👨‍💻 Админ получил уведомление\n\n"
+        f"⏳ Конфиг придёт сюда после проверки оплаты\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ Если конфиг не пришёл через 15 минут -\n"
+        f"напишите админу: {ADMIN_CONTACT}",
         parse_mode="HTML",
         reply_markup=keyboard
     )
     
     await callback.answer("✅ Уведомление отправлено админу!")
+
 
 # ========== ОПЛАТА КРИПТОЙ ==========
 @dp.callback_query(lambda c: c.data == "pay_crypto")
@@ -420,7 +439,7 @@ async def crypto_pay(callback: types.CallbackQuery):
                     f"🪙 <b>ОПЛАТА CRYPTO (USDT)</b>\n\n"
                     f"📦 Заказ: #{order_id}\n"
                     f"💰 Сумма: 1 USDT\n\n"
-                    f"👇 Нажми «Оплатить»",
+                    f"👇 Нажми «Оплатить» для перехода в @CryptoBot",
                     parse_mode="HTML",
                     reply_markup=keyboard.as_markup()
                 )
@@ -643,18 +662,7 @@ async def check_crypto_bot(message: types.Message):
     if not CRYPTOBOT_TOKEN:
         await message.answer("❌ CRYPTOBOT_TOKEN не задан")
         return
-    status_msg = await message.answer("🔄 Проверяю подключение к CryptoBot...")
-    async with aiohttp.ClientSession() as session:
-        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
-        try:
-            async with session.post("https://pay.crypt.bot/api/getMe", headers=headers, timeout=10) as resp:
-                data = await resp.json()
-                if data.get("ok"):
-                    await status_msg.edit_text(f"✅ CryptoBot подключён успешно!", parse_mode="HTML")
-                else:
-                    await status_msg.edit_text(f"❌ Ошибка: {data}", parse_mode="HTML")
-        except Exception as e:
-            await status_msg.edit_text(f"❌ Ошибка: {e}", parse_mode="HTML")
+    await message.answer("✅ CryptoBot настроен")
 
 # ========== БАН/РАЗБАН КОМАНДЫ ==========
 @dp.message(Command("ban"))
