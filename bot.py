@@ -6,7 +6,8 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
-    BufferedInputFile, LabeledPrice
+    BufferedInputFile, LabeledPrice,
+    PreCheckoutQuery
 )
 from aiogram.enums import ContentType
 from aiogram.filters import Command
@@ -20,12 +21,11 @@ STARS_PRICE = int(os.getenv("STARS_PRICE", 75))
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "")
 CHANNEL_URL = os.getenv("CHANNEL_URL", "")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
-DB_PATH = os.getenv("DB_PATH", "/data/database.db")
+DB_PATH = os.getenv("DB_PATH", "/app/data/database.db")
 
-# Контакт админа
 ADMIN_CONTACT = "@Withoutx4"
 
-# Создаём директорию для БД если её нет
+# Создаём директорию для БД
 db_dir = os.path.dirname(DB_PATH)
 if db_dir and not os.path.exists(db_dir):
     os.makedirs(db_dir, exist_ok=True)
@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS orders (
     order_status TEXT,
     created_at TEXT,
     completed_at TEXT,
-    crypto_invoice_id TEXT
+    crypto_invoice_id TEXT,
+    crypto_invoice_url TEXT
 )
 """)
 
@@ -73,7 +74,7 @@ CREATE TABLE IF NOT EXISTS mailing (
 
 conn.commit()
 
-# ========== КОНФИГ (ПОЛНЫЙ) ==========
+# ========== КОНФИГ ==========
 CONFIG_TEXT = """[Interface]
 PrivateKey = T3n6Sdaijx8WLHYZ1wMlfFv769/DAbLINXqxonGw3r0=
 Address = 172.16.0.2, 2606:4700:110:825f:c471:eeba:e0:da2f
@@ -96,21 +97,6 @@ PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = 162.159.195.6:2408
 PersistentKeepalive = 15"""
-
-# ========== ТЕКСТЫ ==========
-START_TEXT = """🔮 <b>SHADOWVPN</b> — путь в свободный интернет
-
-🌐 Обходим любые блокировки
-🚀 Максимальная скорость
-🛡️ Полная анонимность
-♾️ Бессрочный доступ
-
-💰 Цена: {stars_price} Stars / 100₽ / 1 USDT
-
-📌 <b>Подпишись на канал:</b>
-{channel_url}
-
-После подписки нажми «ПРОВЕРИТЬ»"""
 
 # ========== КЛАВИАТУРЫ ==========
 class Keyboards:
@@ -141,7 +127,16 @@ class Keyboards:
             [InlineKeyboardButton(text="📊 СТАТИСТИКА", callback_data="admin_stats")],
             [InlineKeyboardButton(text="👥 ПОЛЬЗОВАТЕЛИ", callback_data="admin_users")],
             [InlineKeyboardButton(text="📢 РАССЫЛКА", callback_data="admin_mailing")],
-            [InlineKeyboardButton(text="⚙️ НАСТРОЙКИ", callback_data="admin_settings")]
+            [InlineKeyboardButton(text="⚙️ НАСТРОЙКИ", callback_data="admin_settings")],
+            [InlineKeyboardButton(text="🔙 ВЫХОД", callback_data="admin_back")]
+        ])
+    
+    @staticmethod
+    def crypto_payment_keyboard(invoice_url: str, order_id: int):
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💸 ПЕРЕЙТИ К ОПЛАТЕ", url=invoice_url)],
+            [InlineKeyboardButton(text="🔄 ПРОВЕРИТЬ ОПЛАТУ", callback_data=f"check_crypto_{order_id}")],
+            [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
         ])
 
 # ========== ФУНКЦИИ ==========
@@ -156,7 +151,6 @@ async def check_subscription(user_id: int) -> bool:
 
 async def create_crypto_invoice(amount_usd: float, order_id: int):
     if not CRYPTOBOT_TOKEN:
-        print("❌ CRYPTOBOT_TOKEN не задан")
         return None, None
     
     async with aiohttp.ClientSession() as session:
@@ -167,8 +161,9 @@ async def create_crypto_invoice(amount_usd: float, order_id: int):
             "amount": str(amount_usd),
             "description": f"ShadowVPN #{order_id}",
             "paid_btn_name": "openBot",
-            "paid_btn_url": f"https://t.me/{BOT_USERNAME}",
-            "currency_type": "fiat"
+            "paid_btn_url": f"https://t.me/{BOT_USERNAME}" if BOT_USERNAME else "https://t.me",
+            "currency_type": "fiat",
+            "expires_in": 3600
         }
         
         headers = {
@@ -177,34 +172,28 @@ async def create_crypto_invoice(amount_usd: float, order_id: int):
         }
         
         try:
-            print(f"🔄 Создаю инвойс для заказа #{order_id}")
-            async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
+            async with session.post(url, json=payload, headers=headers, timeout=15) as resp:
                 data = await resp.json()
-                print(f"📥 Ответ CryptoBot: {data}")
-                
                 if data.get("ok"):
-                    print(f"✅ Инвойс создан! ID: {data['result']['invoice_id']}")
                     return data["result"]["bot_url"], str(data["result"]["invoice_id"])
-                else:
-                    print(f"❌ Ошибка CryptoBot: {data}")
-                    return None, None
-        except asyncio.TimeoutError:
-            print("❌ Таймаут при запросе к CryptoBot")
-            return None, None
-        except Exception as e:
-            print(f"❌ Исключение CryptoBot: {e}")
+                return None, None
+        except:
             return None, None
 
 async def check_crypto_payment(invoice_id: str) -> str:
     if not CRYPTOBOT_TOKEN:
         return "unknown"
     async with aiohttp.ClientSession() as session:
+        url = "https://pay.crypt.bot/api/getInvoices"
         payload = {"invoice_ids": invoice_id}
         headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
-        async with session.post("https://pay.crypt.bot/api/getInvoices", json=payload, headers=headers) as resp:
-            data = await resp.json()
-            if data.get("ok") and data["result"]["items"]:
-                return data["result"]["items"][0]["status"]
+        try:
+            async with session.post(url, json=payload, headers=headers, timeout=10) as resp:
+                data = await resp.json()
+                if data.get("ok") and data["result"]["items"]:
+                    return data["result"]["items"][0]["status"]
+        except:
+            pass
     return "unknown"
 
 async def send_config(user_id: int, order_id: int):
@@ -265,7 +254,7 @@ async def cmd_start(message: types.Message):
             [InlineKeyboardButton(text="📢 ПОДПИСАТЬСЯ", url=CHANNEL_URL)],
             [InlineKeyboardButton(text="✅ ПРОВЕРИТЬ", callback_data="check_sub")]
         ])
-        await message.answer(START_TEXT.format(channel_url=CHANNEL_URL, stars_price=STARS_PRICE), parse_mode="HTML", reply_markup=sub_btn)
+        await message.answer(f"🔮 <b>SHADOWVPN</b>\n\nПодпишись на канал:\n{CHANNEL_URL}", parse_mode="HTML", reply_markup=sub_btn)
         return
 
     await message.answer("🔮 <b>SHADOWVPN</b>\n\nВыбери действие в меню ниже:", parse_mode="HTML", reply_markup=Keyboards.main_menu())
@@ -331,7 +320,7 @@ async def stars_pay(callback: types.CallbackQuery):
             await bot.send_message(admin_id, f"Stars ошибка: {e}")
 
 @dp.pre_checkout_query()
-async def pre_checkout_handler(query: types.PreCheckoutQuery):
+async def pre_checkout_handler(query: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(query.id, ok=True)
 
 @dp.message(F.content_type == ContentType.SUCCESSFUL_PAYMENT)
@@ -385,7 +374,7 @@ async def card_pay(callback: types.CallbackQuery):
         f"🏦 Сбербанк / Тинькофф\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"⬇️ <b>ПОСЛЕ ОПЛАТЫ НАЖМИ:</b> «Я ОПЛАТИЛ»\n"
-        f"📞 <b>ОБЯЗАТЕЛЬНО НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
+        f"📞 <b>ИЛИ НАПИШИ АДМИНУ:</b> {ADMIN_CONTACT}\n\n"
         f"⚠️ <i>Укажи номер заказа #{order_id}, чтобы конфиг пришёл быстрее</i>\n\n"
         f"📲 <b>ПОСЛЕ ПОЛУЧЕНИЯ КОНФИГА:</b>\n"
         f"🤖 Android: <a href='https://play.google.com/store/apps/details?id=org.amnezia.vpn'>AmneziaWG</a> | <a href='https://play.google.com/store/apps/details?id=com.wireguard.android'>WireGuard</a>\n"
@@ -394,7 +383,6 @@ async def card_pay(callback: types.CallbackQuery):
         reply_markup=card_keyboard
     )
     
-    # Дополнительное сообщение с напоминанием
     await callback.message.answer(
         f"📢 <b>ВАЖНОЕ УВЕДОМЛЕНИЕ!</b>\n\n"
         f"После оплаты картой, ОБЯЗАТЕЛЬНО напиши админу:\n"
@@ -459,37 +447,30 @@ async def crypto_pay(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
-    # Создаём счёт
+    status_msg = await callback.message.edit_text(
+        f"🪙 <b>СОЗДАНИЕ СЧЁТА...</b>\n\n📦 Заказ #{order_id}\n⏳ Пожалуйста, подожди...",
+        parse_mode="HTML"
+    )
+
     invoice_url, invoice_id = await create_crypto_invoice(1.0, order_id)
 
     if invoice_url and invoice_id:
-        cursor.execute("UPDATE orders SET crypto_invoice_id = ? WHERE id = ?", (invoice_id, order_id))
+        cursor.execute("UPDATE orders SET crypto_invoice_id = ?, crypto_invoice_url = ? WHERE id = ?", 
+                       (invoice_id, invoice_url, order_id))
         conn.commit()
 
-        crypto_btn = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💸 ПЕРЕЙТИ К ОПЛАТЕ", url=invoice_url)],
-            [InlineKeyboardButton(text="🔄 ПРОВЕРИТЬ ОПЛАТУ", callback_data=f"check_crypto_{order_id}")],
-            [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
-        ])
-
-        await callback.message.edit_text(
+        await status_msg.edit_text(
             f"🪙 <b>ОПЛАТА CRYPTO (USDT)</b>\n\n"
             f"📦 Заказ: #{order_id}\n"
             f"💰 Сумма: 1 USDT\n\n"
-            f"1️⃣ Нажми «ПЕРЕЙТИ К ОПЛАТЕ»\n"
-            f"2️⃣ Оплати в @CryptoBot\n"
-            f"3️⃣ Нажми «ПРОВЕРИТЬ ОПЛАТУ»\n\n"
-            f"⚠️ Конфиг придёт автоматически после оплаты!",
+            f"👇 <b>НАЖМИ НА КНОПКУ ДЛЯ ОПЛАТЫ:</b>\n\n"
+            f"После оплаты нажми «ПРОВЕРИТЬ»",
             parse_mode="HTML",
-            reply_markup=crypto_btn
+            reply_markup=Keyboards.crypto_payment_keyboard(invoice_url, order_id)
         )
     else:
-        await callback.message.edit_text(
+        await status_msg.edit_text(
             f"❌ <b>ОШИБКА СОЗДАНИЯ СЧЁТА</b>\n\n"
-            f"Проверь:\n"
-            f"1. Включены ли API методы в @CryptoBot\n"
-            f"2. CRYPTOBOT_TOKEN в переменных Railway\n"
-            f"3. BOT_USERNAME (без @)\n\n"
             f"📞 Напиши админу: {ADMIN_CONTACT}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -534,54 +515,13 @@ async def check_crypto_payment_handler(callback: types.CallbackQuery):
 async def noop_handler(callback: types.CallbackQuery):
     await callback.answer("ℹ️ Информация", show_alert=False)
 
-# ========== АДМИН-ПАНЕЛЬ ==========
+# ========== АДМИН-ПАНЕЛЬ (ПОЛНАЯ) ==========
 @dp.message(Command("admin"))
 async def admin_panel(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ <b>НЕТ ДОСТУПА</b>", parse_mode="HTML")
         return
     await message.answer("🔧 <b>АДМИН-ПАНЕЛЬ SHADOWVPN</b>\n\nВыбери действие:", parse_mode="HTML", reply_markup=Keyboards.admin_main())
-
-@dp.message(Command("check_crypto"))
-async def check_crypto_bot(message: types.Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Нет прав")
-        return
-    
-    if not CRYPTOBOT_TOKEN:
-        await message.answer("❌ CRYPTOBOT_TOKEN не задан в переменных окружения Railway")
-        return
-    
-    status_msg = await message.answer("🔄 Проверяю подключение к CryptoBot...")
-    
-    async with aiohttp.ClientSession() as session:
-        url = "https://pay.crypt.bot/api/getMe"
-        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
-        
-        try:
-            async with session.post(url, headers=headers, timeout=10) as resp:
-                data = await resp.json()
-                if data.get("ok"):
-                    await status_msg.edit_text(
-                        f"✅ <b>CryptoBot подключён успешно!</b>\n\n"
-                        f"🤖 Приложение: {data['result'].get('name', 'Unknown')}\n"
-                        f"🆔 ID: {data['result']['id']}\n\n"
-                        f"📌 <b>Проверь в @CryptoBot:</b>\n"
-                        f"• Метод createInvoice: Вкл.\n"
-                        f"• Метод getInvoices: Вкл.\n\n"
-                        f"🎯 Теперь крипто-оплата должна работать!",
-                        parse_mode="HTML"
-                    )
-                else:
-                    await status_msg.edit_text(
-                        f"❌ <b>Ошибка подключения к CryptoBot</b>\n\n"
-                        f"Ответ: {data}\n\n"
-                        f"Проверь CRYPTOBOT_TOKEN в переменных Railway\n"
-                        f"И включи API методы в @CryptoBot",
-                        parse_mode="HTML"
-                    )
-        except Exception as e:
-            await status_msg.edit_text(f"❌ Ошибка: {e}")
 
 @dp.callback_query(lambda c: c.data == "admin_orders")
 async def admin_orders(callback: types.CallbackQuery):
@@ -764,6 +704,40 @@ async def stats_cmd(message: types.Message):
 
     await message.answer(f"📊 Статистика:\nЗаказов: {total}\nВыполнено: {completed}\nОжидают: {total - completed}")
 
+@dp.message(Command("check_crypto"))
+async def check_crypto_bot(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Нет прав")
+        return
+    
+    if not CRYPTOBOT_TOKEN:
+        await message.answer("❌ CRYPTOBOT_TOKEN не задан")
+        return
+    
+    status_msg = await message.answer("🔄 Проверяю подключение к CryptoBot...")
+    
+    async with aiohttp.ClientSession() as session:
+        url = "https://pay.crypt.bot/api/getMe"
+        headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
+        
+        try:
+            async with session.post(url, headers=headers, timeout=10) as resp:
+                data = await resp.json()
+                if data.get("ok"):
+                    await status_msg.edit_text(
+                        f"✅ <b>CryptoBot подключён успешно!</b>\n\n"
+                        f"🤖 Приложение: {data['result'].get('name', 'Unknown')}\n"
+                        f"🆔 ID: {data['result']['id']}\n\n"
+                        f"📌 <b>Проверь в @CryptoBot:</b>\n"
+                        f"• Метод createInvoice: Вкл.\n"
+                        f"• Метод getInvoices: Вкл.",
+                        parse_mode="HTML"
+                    )
+                else:
+                    await status_msg.edit_text(f"❌ Ошибка: {data}", parse_mode="HTML")
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Ошибка: {e}")
+
 # ========== БАН/РАЗБАН КОМАНДЫ ==========
 @dp.message(Command("ban"))
 async def ban_user(message: types.Message):
@@ -858,12 +832,7 @@ async def main():
     print(f"📁 База данных: {DB_PATH}")
     print(f"👥 Админы: {ADMIN_IDS}")
     print(f"⭐ Цена Stars: {STARS_PRICE}")
-    print(f"📢 Канал: {REQUIRED_CHANNEL or 'НЕ ЗАДАН'}")
-    print(f"📞 Админ контакт: {ADMIN_CONTACT}")
-    if CRYPTOBOT_TOKEN:
-        print(f"🪙 CryptoBot: ВКЛЮЧЁН")
-    else:
-        print(f"🪙 CryptoBot: ВЫКЛЮЧЕН")
+    print(f"🪙 CryptoBot: {'ВКЛЮЧЁН' if CRYPTOBOT_TOKEN else 'ВЫКЛЮЧЕН'}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
