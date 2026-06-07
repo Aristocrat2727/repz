@@ -325,7 +325,6 @@ async def card_pay(callback: types.CallbackQuery):
     conn.commit()
     order_id = cursor.lastrowid
 
-    # Уведомление админам
     for admin_id in ADMIN_IDS:
         await bot.send_message(
             admin_id,
@@ -338,7 +337,6 @@ async def card_pay(callback: types.CallbackQuery):
             parse_mode="HTML"
         )
 
-    # Клавиатура с реквизитами и админом
     card_keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💎 2200 1234 5678 9012", callback_data="noop")],
         [InlineKeyboardButton(text="🏦 Сбербанк / Тинькофф", callback_data="noop")],
@@ -348,7 +346,6 @@ async def card_pay(callback: types.CallbackQuery):
         [InlineKeyboardButton(text="◀️ НАЗАД", callback_data="buy_menu")]
     ])
 
-    # Сообщение пользователю
     await callback.message.edit_text(
         f"💳 <b>ОПЛАТА КАРТОЙ РФ</b>\n\n"
         f"📦 <b>ЗАКАЗ #{order_id}</b>\n"
@@ -675,6 +672,57 @@ async def stats_cmd(message: types.Message):
     completed = cursor.fetchone()[0]
 
     await message.answer(f"📊 Статистика:\nЗаказов: {total}\nВыполнено: {completed}\nОжидают: {total - completed}")
+
+# ========== БАН/РАЗБАН КОМАНДЫ ==========
+@dp.message(Command("ban"))
+async def ban_user(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Нет прав")
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("❌ Использование: /ban 123456789")
+        return
+
+    user_id = int(parts[1])
+
+    cursor.execute("UPDATE users SET is_banned = 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+    try:
+        await bot.send_message(user_id, "❌ <b>ВАШ ДОСТУП ЗАБЛОКИРОВАН</b>\n\nОбратись к администратору.", parse_mode="HTML")
+    except:
+        pass
+
+    await message.answer(f"✅ Пользователь {user_id} забанен")
+
+@dp.message(Command("unban"))
+async def unban_user(message: types.Message):
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("❌ Нет прав")
+        return
+
+    parts = message.text.split()
+    if len(parts) != 2:
+        await message.answer("❌ Использование: /unban 123456789")
+        return
+
+    user_id = int(parts[1])
+
+    cursor.execute("UPDATE users SET is_banned = 0 WHERE user_id = ?", (user_id,))
+    conn.commit()
+
+    try:
+        await bot.send_message(user_id, "✅ <b>ВАШ ДОСТУП ВОССТАНОВЛЕН</b>\n\nТеперь ты можешь пользоваться ботом.", parse_mode="HTML")
+    except:
+        pass
+
+    await message.answer(f"✅ Пользователь {user_id} разбанен")
+
+@dp.message(Command("getid"))
+async def get_id(message: types.Message):
+    await message.answer(f"🆔 Твой ID: <code>{message.from_user.id}</code>", parse_mode="HTML")
 
 # ========== РАССЫЛКА ==========
 mailing_active = False
