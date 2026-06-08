@@ -16,16 +16,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ========== ПЕРЕМЕННЫЕ ==========
 
-BOT_TOKEN = os.getenv(“BOT_TOKEN”)
-ADMIN_IDS = [int(x.strip()) for x in os.getenv(“ADMIN_IDS”, “”).split(”,”) if x.strip()]
-CRYPTOBOT_TOKEN = os.getenv(“CRYPTOBOT_TOKEN”, “”)
-STARS_PRICE = int(os.getenv(“STARS_PRICE”, 75))
-REQUIRED_CHANNEL = os.getenv(“REQUIRED_CHANNEL”, “”)
-CHANNEL_URL = os.getenv(“CHANNEL_URL”, “https://t.me/shadowvpn_channel”)
-BOT_USERNAME = os.getenv(“BOT_USERNAME”, “”)
-DB_PATH = os.getenv(“DB_PATH”, “/app/data/database.db”)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN", "")
+STARS_PRICE = int(os.getenv("STARS_PRICE", 75))
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "")
+CHANNEL_URL = os.getenv("CHANNEL_URL")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")
+DB_PATH = os.getenv("DB_PATH", "/app/data/database.db")
 
-ADMIN_CONTACT = “@Withoutx4”
+ADMIN_CONTACT = "@Withoutx4"
 
 # Создаём директорию для БД
 
