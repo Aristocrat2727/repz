@@ -97,7 +97,8 @@ PrivateKey = j046lIy8qhue8ZLbudxTiZeZcSwfvWu2HjtUBYXFfIE=
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = 162.159.192.1:2408
 PersistentKeepalive = 15
-PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="""
+PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+"""
 
 # ========== КЛАВИАТУРЫ ==========
 
